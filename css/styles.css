@@ -100,7 +100,7 @@ strong { font-weight: 600; }
 .gate { max-width: 520px; margin: 60px auto; padding: 32px; border: 1px solid var(--rule); background: var(--paper-2); }
 .gate h2 { font-size: 30px; margin: 4px 0 10px; }
 .gate__note { color: var(--ink-2); margin-bottom: 18px; }
-body.is-gated .layout, body.is-gated .colophon { display: none; }
+body.is-gated .layout, body.is-gated .colophon, body.is-gated .masthead__meta { display: none; }
 
 /* ---------- layout ---------- */
 .layout {
