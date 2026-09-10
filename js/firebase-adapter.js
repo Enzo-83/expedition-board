@@ -8,21 +8,6 @@
                  dispatches/{id}    network-wide event feed, newest first by ts
                  allowlist/{email}  who may sign in — see firestore.rules */
 const KS = window.KS;
-const cfg = window.KS_FIREBASE_CONFIG;
-
-if (KS.booted) {
-  // app.js already booted the local demo (file:// or the fallback button).
-} else if (!cfg || !cfg.apiKey || !cfg.projectId) {
-  KS.boot(new KS.LocalAdapter());
-} else {
-  const V = '12.4.0';
-  const [app, auth, fs] = await Promise.all([
-    import(`https://www.gstatic.com/firebasejs/${V}/firebase-app.js`),
-    import(`https://www.gstatic.com/firebasejs/${V}/firebase-auth.js`),
-    import(`https://www.gstatic.com/firebasejs/${V}/firebase-firestore.js`),
-  ]);
-  KS.boot(new FirebaseAdapter(cfg, Object.assign({}, app, auth, fs)));
-}
 
 // Firestore rejects undefined field values; strip them before writing.
 function clean(obj) {
@@ -163,4 +148,20 @@ class FirebaseAdapter {
   async log(kind, text, meta = {}) {
     await this.F.addDoc(this.F.collection(this.db, 'dispatches'), clean(Object.assign({ ts: Date.now(), kind, text, uid: this.user.uid }, meta)));
   }
+}
+
+// ---- boot (kept after the class: a class is not usable before its declaration runs) ----
+const cfg = window.KS_FIREBASE_CONFIG;
+if (KS.booted) {
+  // app.js already booted the local demo (file:// or the fallback button).
+} else if (!cfg || !cfg.apiKey || !cfg.projectId) {
+  KS.boot(new KS.LocalAdapter());
+} else {
+  const V = '12.4.0';
+  const [app, auth, fs] = await Promise.all([
+    import(`https://www.gstatic.com/firebasejs/${V}/firebase-app.js`),
+    import(`https://www.gstatic.com/firebasejs/${V}/firebase-auth.js`),
+    import(`https://www.gstatic.com/firebasejs/${V}/firebase-firestore.js`),
+  ]);
+  KS.boot(new FirebaseAdapter(cfg, Object.assign({}, app, auth, fs)));
 }
