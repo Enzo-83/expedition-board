@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expedition Board — Kresthalis</title>
+  <meta name="description" content="Drop-in scheduling board for the Kresthalis West Marches network: post expeditions, mark your availability, seat a character.">
+  <meta name="color-scheme" content="light">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<a class="skip" href="#board">Skip to the board</a>
+
+<div id="boot-error" class="boot-error" hidden>
+  <span>Couldn't reach the sync layer (Firebase). Check <code>js/firebase-config.js</code> and your connection.</span>
+  <button type="button" data-action="boot-local">Run the local demo instead</button>
+</div>
+
+<header class="masthead">
+  <div class="masthead__brand">
+    <p class="overline">The Kresthalis Network · West Marches</p>
+    <h1 class="masthead__title">Expedition Board</h1>
+  </div>
+  <div class="masthead__right">
+    <div class="masthead__auth" id="auth"></div>
+    <dl class="masthead__meta">
+      <div><dt>Board time</dt><dd id="meta-tz">—</dd></div>
+      <div><dt>Showing</dt><dd id="meta-range">—</dd></div>
+      <div><dt>Open seats</dt><dd id="meta-open">—</dd></div>
+    </dl>
+  </div>
+</header>
+
+<div id="arm-banner" class="arm-banner" hidden>
+  <span>Placing <strong id="arm-name"></strong> — tap an open seat on the board</span>
+  <button type="button" data-action="arm-cancel">Cancel</button>
+</div>
+
+<section id="gate" class="gate" hidden aria-labelledby="gate-h">
+  <p class="overline">Members only</p>
+  <h2 id="gate-h">Sign in to see the board</h2>
+  <p class="gate__note" id="gate-note"></p>
+  <div class="row">
+    <button type="button" class="btn btn--primary" id="gate-signin" data-action="sign-in">Sign in with Google</button>
+    <button type="button" class="btn btn--ghost" id="gate-signout" data-action="sign-out" hidden>Sign out</button>
+  </div>
+</section>
+
+<main class="layout">
+
+  <div class="area-side">
+    <!-- ===== Profile + roster ===== -->
+    <section class="panel area-user" aria-labelledby="user-h">
+      <div class="panel__head">
+        <h2 id="user-h">Signed in</h2>
+        <span class="label" id="user-role">Player</span>
+      </div>
+      <div class="user">
+        <div class="user__avatar" id="user-initials" aria-hidden="true">—</div>
+        <div class="user__text">
+          <div class="user__name" id="user-name">—</div>
+          <div class="user__sub" id="user-sub"></div>
+        </div>
+        <button type="button" class="btn btn--sm btn--ghost" data-action="profile-open" title="Edit your name, handle and roster">Edit</button>
+      </div>
+      <div class="panel__sub">
+        <span class="label">Active roster</span>
+        <span class="label" id="user-chars">—</span>
+      </div>
+      <div id="roster-zone" class="roster-zone">
+        <ul id="roster" class="roster"></ul>
+        <p class="hint">Drag a character onto an open seat — or tap the character, then tap the seat. Drag a seated character back here to withdraw.</p>
+      </div>
+    </section>
+
+    <!-- ===== Availability ===== -->
+    <section class="panel area-avail" aria-labelledby="avail-h">
+      <div class="panel__head">
+        <h2 id="avail-h">My availability</h2>
+        <span class="label" id="avail-count">—</span>
+      </div>
+      <div class="panel__body">
+        <div id="avail"></div>
+        <div class="presets" role="group" aria-label="Availability presets">
+          <button type="button" class="btn btn--sm" data-preset="weeknights">+ Weeknights</button>
+          <button type="button" class="btn btn--sm" data-preset="weekends">+ Weekends</button>
+          <button type="button" class="btn btn--sm btn--ghost" data-preset="clear">Clear</button>
+        </div>
+        <p class="hint hint--flush">Recurring weekly windows, in your local time. Expeditions that land in a marked window are stamped <em>Fits you</em>, and everyone's windows feed the overlap grid.</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== The board ===== -->
+  <section class="area-board" id="board" aria-labelledby="board-h">
+    <div class="board__head">
+      <div>
+        <p class="overline">Drop-in matchmaker</p>
+        <h2 id="board-h">Upcoming expeditions</h2>
+      </div>
+      <button type="button" class="btn btn--primary" data-action="post-open">Post an expedition</button>
+    </div>
+
+    <div class="stats" aria-label="Board summary">
+      <div class="stat"><div class="stat__n" id="stat-upcoming">0</div><div class="stat__l">Upcoming</div></div>
+      <div class="stat"><div class="stat__n" id="stat-open">0</div><div class="stat__l">Open seats</div></div>
+      <div class="stat"><div class="stat__n" id="stat-fit">0</div><div class="stat__l">Fit your windows</div></div>
+      <div class="stat"><div class="stat__n" id="stat-mine">0</div><div class="stat__l">Your commitments</div></div>
+    </div>
+
+    <div class="filters" role="group" aria-label="Filter expeditions">
+      <button type="button" data-filter="all" aria-pressed="true">All</button>
+      <button type="button" data-filter="fit" aria-pressed="false">Fits my availability</button>
+      <button type="button" data-filter="open" aria-pressed="false">Open seats</button>
+      <span class="count">Showing <span id="board-count">—</span></span>
+    </div>
+
+    <div id="board-list"></div>
+  </section>
+
+  <div class="area-rail">
+    <!-- ===== Dispatches ===== -->
+    <section class="panel" aria-labelledby="disp-h">
+      <div class="panel__head">
+        <h2 id="disp-h">Dispatches</h2>
+        <span class="label" id="disp-unread">—</span>
+      </div>
+      <div class="panel__body panel__body--list">
+        <ul id="dispatches" class="dispatches"></ul>
+        <div class="row">
+          <button type="button" class="btn btn--sm btn--ghost" data-action="mark-read">Mark all read</button>
+        </div>
+      </div>
+      <div class="prefs">
+        <label><input type="checkbox" id="pref-openseat"> <span>Flag seats that open in a window I'm free for</span></label>
+        <div class="row">
+          <button type="button" class="btn btn--sm" id="btn-browser-alerts" data-action="browser-alerts" aria-pressed="false">Enable browser alerts</button>
+          <span class="hint hint--inline" id="browser-alerts-note"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Network overlap ===== -->
+    <section class="panel" aria-labelledby="overlap-h">
+      <div class="panel__head">
+        <h2 id="overlap-h">Who's free when</h2>
+        <span class="label" id="overlap-total">—</span>
+      </div>
+      <div class="panel__body">
+        <div id="overlap"></div>
+        <div class="heat-legend" aria-hidden="true">
+          <span>Fewer</span><i class="h0"></i><i class="h1"></i><i class="h2"></i><i class="h3"></i><i class="h4"></i><span>More</span>
+          <span class="heat-legend__me">▪ your window</span>
+        </div>
+        <p id="overlap-detail" class="overlap-detail" aria-live="polite">Hover a cell to see who is free.</p>
+        <div class="best">
+          <span class="label">Best windows to post</span>
+          <ol id="best-windows" class="best__list"></ol>
+        </div>
+      </div>
+    </section>
+  </div>
+
+</main>
+
+<footer class="colophon">
+  <span id="colophon-note">Sample data — every name, level and seat on this board is placeholder until the board is connected to Firebase. <button type="button" class="linklike" data-action="reset">Reset sample data</button></span>
+  <span>Kresthalis Expedition Board · hosted on GitHub Pages</span>
+</footer>
+
+<!-- ===== Post an expedition ===== -->
+<dialog id="post-dialog" aria-labelledby="post-h">
+  <div class="dialog__head">
+    <h2 id="post-h">Post an expedition</h2>
+    <span class="label">GM tools</span>
+  </div>
+  <form id="post-form" class="form" novalidate>
+    <label class="field full"><span>Title</span><input name="title" required maxlength="80" placeholder="The Salt Stair"></label>
+    <label class="field full"><span>Route or region</span><input name="region" required maxlength="80" placeholder="Frost-Pelt Trail, north"></label>
+    <label class="field"><span>GM</span><input name="gm" required maxlength="40"></label>
+    <label class="field"><span>Date</span><input name="date" type="date" required></label>
+    <label class="field"><span>Window</span><select name="block" id="post-block"></select></label>
+    <label class="field"><span>Seats</span><input name="seats" type="number" min="1" max="8" value="5" required></label>
+    <label class="field"><span>Min level</span><input name="minLevel" type="number" min="1" max="20" value="1" required></label>
+    <label class="field"><span>Max level</span><input name="maxLevel" type="number" min="1" max="20" value="5" required></label>
+    <label class="field full"><span>Notes for the party</span><textarea name="notes" rows="3" maxlength="240" placeholder="What the party is walking into, what to bring, when the roster locks."></textarea></label>
+    <p class="form__error full" id="post-error" role="alert" hidden></p>
+    <div class="form__actions">
+      <button type="button" class="btn btn--ghost" data-action="post-close">Cancel</button>
+      <button type="submit" class="btn btn--primary">Post to the board</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ===== Profile & roster ===== -->
+<dialog id="profile-dialog" aria-labelledby="profile-h">
+  <div class="dialog__head">
+    <h2 id="profile-h">Your profile</h2>
+    <span class="label">Roster</span>
+  </div>
+  <form id="profile-form" class="form" novalidate>
+    <label class="field"><span>Name</span><input name="name" required maxlength="40" placeholder="As it should appear on a seat"></label>
+    <label class="field"><span>Handle</span><input name="handle" maxlength="24" placeholder="rowan"></label>
+    <label class="field full"><span>Discord</span><input name="discord" maxlength="40" placeholder="rowan_a"></label>
+    <div class="full">
+      <span class="label">Characters</span>
+      <div id="char-rows" class="char-rows"></div>
+      <button type="button" class="btn btn--sm" data-action="char-add">+ Add a character</button>
+    </div>
+    <p class="form__error full" id="profile-error" role="alert" hidden></p>
+    <div class="form__actions">
+      <button type="button" class="btn btn--ghost" data-action="profile-close">Cancel</button>
+      <button type="submit" class="btn btn--primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<noscript><p class="noscript">The Expedition Board needs JavaScript to run.</p></noscript>
+
+<script src="js/data.js"></script>
+<script src="js/local-adapter.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/app.js"></script>
+<script type="module" src="js/firebase-adapter.js"></script>
+</body>
+</html>
