@@ -17,15 +17,14 @@ real origin; any static server works:
 npx --yes serve kresthalis-scheduler
 ```
 
-## Publish on GitHub Pages
+## Where it lives
 
-1. Create a new repository (e.g. `expedition-board`) and push the contents of this folder to
-   its root — `index.html` must sit at the top level.
-2. Repository → **Settings → Pages** → *Build and deployment* → Source: **Deploy from a branch**,
-   Branch: `main`, Folder: `/ (root)`. Save.
-3. After a minute the site is live at `https://<you>.github.io/expedition-board/`.
+- Repository: <https://github.com/Enzo-83/expedition-board>
+- Site: <https://enzo-83.github.io/expedition-board/> — served from the `main` branch root
+  (Settings → Pages → Deploy from a branch → `main` / `/ (root)`).
 
-`.nojekyll` is included so Pages serves the files as-is.
+Push to `main` and Pages rebuilds in about a minute. `.nojekyll` is included so Pages serves the
+files as-is.
 
 ## Going live with Firebase
 
