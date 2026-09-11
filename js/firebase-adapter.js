@@ -148,6 +148,10 @@ class FirebaseAdapter {
   async log(kind, text, meta = {}) {
     await this.F.addDoc(this.F.collection(this.db, 'dispatches'), clean(Object.assign({ ts: Date.now(), kind, text, uid: this.user.uid }, meta)));
   }
+  // Refresh one of my own dispatches in place (rules allow an author to update their own).
+  async relog(id, text) {
+    await this.F.updateDoc(this.F.doc(this.db, 'dispatches', id), { text, ts: Date.now() });
+  }
 }
 
 // ---- boot (kept after the class: a class is not usable before its declaration runs) ----

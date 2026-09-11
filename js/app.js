@@ -378,13 +378,17 @@
     if (name === 'weekends') add(['sat', 'sun'].flatMap(d => BLOCKS.map(b => `${d}-${b.key}`)));
     await A.setAvailability(a); noteAvail();
   }
-  // One dispatch per burst of edits, not one per cell.
+  // One dispatch per editing session, not one per cell: wait for a pause, then refresh my most
+  // recent availability line if it is under an hour old instead of adding another.
   function noteAvail() {
     clearTimeout(availTimer);
-    availTimer = setTimeout(() => {
+    availTimer = setTimeout(async () => {
       const n = (S.me.availability || []).length;
-      A.log('avail', `${S.me.name} updated availability — free in ${n} window${n === 1 ? '' : 's'} a week.`);
-    }, 1800);
+      const text = `${S.me.name} updated availability — free in ${n} window${n === 1 ? '' : 's'} a week.`;
+      const recent = S.dispatches.find(d => d.kind === 'avail' && d.uid === S.me.uid && Date.now() - d.ts < 3600e3);
+      try { if (recent && A.relog) await A.relog(recent.id, text); else await A.log('avail', text); }
+      catch (e) { /* the feed line is a courtesy; the availability itself is already saved */ }
+    }, 4000);
   }
 
   // ------------------------------------------------------------- dialogs

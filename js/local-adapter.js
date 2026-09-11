@@ -88,6 +88,13 @@ window.KS = window.KS || {};
       if (this.state.dispatches.length > 80) this.state.dispatches.length = 80;
       this._emit();
     }
+    async relog(id, text) {
+      const d = this.state.dispatches.find(x => x.id === id);
+      if (!d) return this.log('avail', text);
+      d.text = text; d.ts = Date.now();
+      this.state.dispatches.sort((a, b) => b.ts - a.ts);
+      this._emit();
+    }
     reset() { this.state = KS.sample(); this._emit(); }
   }
 
