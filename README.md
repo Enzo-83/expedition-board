@@ -3,7 +3,10 @@
 A drop-in scheduling board for the Kresthalis West Marches network. Players mark the weekly
 windows they can play, GMs post expeditions, and anyone drags one of their characters onto an
 open seat. A shared dispatch feed records every posting, seating and withdrawal; an overlap grid
-shows the GM which windows the most players are free for.
+shows the GM which windows the most players are free for, and a **party picker** narrows it to
+a chosen set of characters — ringed cells are windows where all of their players are free, with
+one click to request an expedition there (a dispatch every GM sees) or to post one pre-filled
+with that date, window and level band.
 
 Plain HTML, CSS and JavaScript — no build step. Hosted on GitHub Pages; live data via Firebase
 (Spark / free tier). Until Firebase is configured the page runs as a local demo on sample data.
@@ -23,8 +26,12 @@ npx --yes serve kresthalis-scheduler
 - Site: <https://enzo-83.github.io/expedition-board/> — served from the `main` branch root
   (Settings → Pages → Deploy from a branch → `main` / `/ (root)`).
 
-Push to `main` and Pages rebuilds in about a minute. `.nojekyll` is included so Pages serves the
-files as-is.
+Push to `main` and Pages rebuilds in about a minute (browsers may cache the old files for up to
+ten more; Ctrl+Shift+R forces a refresh). `.nojekyll` is included so Pages serves the files as-is.
+
+Add `?demo` to the URL — <https://enzo-83.github.io/expedition-board/?demo> — to open the board
+on sample data in the local mode, with no sign-in and nothing shared: handy for showing a new
+player the flow without touching real seats.
 
 ## Going live with Firebase
 
@@ -86,7 +93,7 @@ so two players racing for the last seat cannot both get it.
 
 - `players/{uid}` — `name, handle, discord, role, characters[{id,name,class,level}], availability["mon-eve", …], watching[sessionId], prefs, readAt`
 - `sessions/{id}` — `title, region, gm, gmUid, date "YYYY-MM-DD", block, seats, minLevel, maxLevel, notes, party[{charId, uid, name, level, owner}], locked, postedAt`
-- `dispatches/{id}` — `ts, kind (new|seat|open|full|avail), text, uid, sessionId?, date?, block?`
+- `dispatches/{id}` — `ts, kind (new|seat|open|full|avail|request), text, uid, sessionId?, date?, block?, party?[uid]`
 - `allowlist/{email}` — presence is what matters
 
 ### Rules the board enforces

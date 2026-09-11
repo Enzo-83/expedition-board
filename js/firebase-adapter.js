@@ -152,9 +152,10 @@ class FirebaseAdapter {
 
 // ---- boot (kept after the class: a class is not usable before its declaration runs) ----
 const cfg = window.KS_FIREBASE_CONFIG;
+const demo = new URLSearchParams(location.search).has('demo');   // ?demo — sample data, nothing shared
 if (KS.booted) {
   // app.js already booted the local demo (file:// or the fallback button).
-} else if (!cfg || !cfg.apiKey || !cfg.projectId) {
+} else if (demo || !cfg || !cfg.apiKey || !cfg.projectId) {
   KS.boot(new KS.LocalAdapter());
 } else {
   const V = '12.4.0';

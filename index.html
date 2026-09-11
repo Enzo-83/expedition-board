@@ -150,6 +150,14 @@
         <span class="label" id="overlap-total">—</span>
       </div>
       <div class="panel__body">
+        <details id="party-picker" class="picker">
+          <summary class="picker__summary"><span class="label picker__title">Party picker</span><span class="label" id="party-summary">Pick a party</span></summary>
+          <div id="party-chips" class="chips"></div>
+          <div class="row picker__foot">
+            <p class="hint hint--inline" id="party-hint"></p>
+            <button type="button" class="btn btn--sm btn--ghost" id="party-clear" data-action="party-clear" hidden>Clear</button>
+          </div>
+        </details>
         <div id="overlap"></div>
         <div class="heat-legend" aria-hidden="true">
           <span>Fewer</span><i class="h0"></i><i class="h1"></i><i class="h2"></i><i class="h3"></i><i class="h4"></i><span>More</span>
@@ -157,7 +165,7 @@
         </div>
         <p id="overlap-detail" class="overlap-detail" aria-live="polite">Hover a cell to see who is free.</p>
         <div class="best">
-          <span class="label">Best windows to post</span>
+          <span class="label" id="best-label">Best windows to post</span>
           <ol id="best-windows" class="best__list"></ol>
         </div>
       </div>

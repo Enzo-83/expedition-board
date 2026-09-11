@@ -194,8 +194,29 @@ td.heat__cell:hover, td.heat__cell:focus { outline: 2px solid var(--ink); outlin
 .best__list li { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 5px 0; border-bottom: 1px solid var(--hair); }
 .best__list li:last-child { border-bottom: 0; }
 .best__list li::before { counter-increment: best; content: counter(best) "."; color: var(--crimson); font-weight: 600; margin-right: 8px; }
-.best__list li span { flex: 1; }
+.best__list li { flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.best__name { flex: 1; min-width: 0; }
+.best__name small { display: block; font-size: 11px; color: var(--ink-3); }
 .best__list li strong { font-family: var(--serif); font-size: 15px; }
+.best--all strong { color: var(--crimson); }
+.best__act { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; padding-left: 22px; }
+
+/* Party picker: choose characters, the heatmap narrows to their players. */
+.picker { border: 1px solid var(--hair); margin-bottom: 12px; }
+.picker__summary { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; list-style: none; }
+.picker__summary::-webkit-details-marker { display: none; }
+.picker__summary::before { content: "+"; font-weight: 600; color: var(--crimson); width: 10px; }
+.picker[open] .picker__summary::before { content: "–"; }
+.picker__title { flex: 1; color: var(--ink); }
+.chips { display: grid; gap: 4px; padding: 0 10px 8px; }
+.chips__group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.chips__owner { width: 100%; margin-top: 6px; font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.chip { border: 1px solid var(--hair); padding: 3px 8px; font-size: 11.5px; font-weight: 500; background: var(--paper-2); }
+.chip:hover { border-color: var(--ink); }
+.chip[aria-pressed=true] { background: var(--ink); color: var(--paper-2); border-color: var(--ink); }
+.chip[aria-pressed=true] small { color: var(--paper-3); }
+.picker__foot { justify-content: space-between; padding: 6px 10px 8px; border-top: 1px solid var(--hair); }
+td.heat__cell--all { box-shadow: inset 0 0 0 2px var(--paper-2); font-weight: 700; }
 
 /* ---------- board ---------- */
 .board__head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 20px; padding-bottom: 12px; border-bottom: 1px solid var(--rule); }
@@ -280,7 +301,7 @@ body.is-armed .seat--open, body.is-dragging-char .seat--open { border-style: sol
 .disp { display: grid; grid-template-columns: 74px 1fr; gap: 3px 10px; padding: 10px 0; border-bottom: 1px solid var(--hair); font-size: 13px; position: relative; }
 .disp:last-child { border-bottom: 0; }
 .disp__kind { font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); padding-top: 2px; line-height: 1.3; }
-.disp--open .disp__kind, .disp--new .disp__kind, .disp--forme .disp__kind { color: var(--crimson); }
+.disp--open .disp__kind, .disp--new .disp__kind, .disp--request .disp__kind, .disp--forme .disp__kind { color: var(--crimson); }
 .disp__text { grid-column: 2; }
 .disp__time { grid-column: 2; font-size: 11px; color: var(--ink-3); }
 .disp--unread::before { content: ""; position: absolute; left: -10px; top: 15px; width: 5px; height: 5px; background: var(--crimson); }

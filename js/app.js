@@ -14,9 +14,9 @@
   let dragging = null;           // { kind: 'char' | 'chip', charId, sessId }
   let seenDispatches = null;     // ids already seen — new ones may raise a browser alert
   let availTimer = null, toastTimer = null, profileOpenedOnce = false, resetArmedAt = 0;
-  const ui = { filter: 'all' };
+  const ui = { filter: 'all', party: new Set() };   // party: "uid:charId" keys picked in the overlap panel
 
-  const KIND = { new: 'Posted', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', note: 'Note' };
+  const KIND = { new: 'Posted', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', request: 'Request', note: 'Note' };
   const fmtDay  = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
   const fmtDate = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
   const fmtLong = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -195,30 +195,98 @@
     note.textContent = Notification.permission === 'denied' ? 'Blocked in your browser settings.' : on ? 'While this tab is open.' : '';
   }
 
+  // ---- overlap + party picker ----------------------------------------------
+  // With nothing picked the heatmap shows the whole network. Pick characters and it narrows
+  // to their players: ringed cells are windows where every one of them is free.
+  const partyKey = (uid, charId) => `${uid}:${charId || ''}`;
+  function peopleList() {
+    return [
+      { uid: S.me.uid, name: S.me.name, availability: S.me.availability || [], characters: S.me.characters || [], me: true },
+      ...S.players.filter(p => p.uid !== S.me.uid).map(p => ({ uid: p.uid, name: p.name || 'Unnamed', availability: p.availability || [], characters: p.characters || [], me: false })),
+    ];
+  }
+  function partyGroup(people) {
+    const owners = new Set([...ui.party].map(k => k.split(':')[0]));
+    const group = people.filter(p => owners.has(p.uid));
+    const chars = [];
+    people.forEach(p => p.characters.forEach(c => { if (ui.party.has(partyKey(p.uid, c.id))) chars.push(Object.assign({}, c, { uid: p.uid, owner: p.name })); }));
+    return { group, chars };
+  }
+  const slotOrder = slot => { const [dk, bk] = slot.split('-'); return DAYS.findIndex(d => d.key === dk) * 10 + U.blockIndex(bk); };
+  const slotLabel = slot => { const [dk, bk] = slot.split('-'); return `${U.dayOf(dk).label} ${U.blockOf(bk).label}`; };
+  const listNames = arr => arr.length <= 1 ? arr.join('') : `${arr.slice(0, -1).join(', ')} and ${arr[arr.length - 1]}`;
+  function nextDateFor(dk) {
+    const dow = KS.DAY_KEYS.indexOf(dk), d = new Date(); d.setHours(0, 0, 0, 0);
+    let diff = (dow - d.getDay() + 7) % 7; if (diff === 0) diff = 7;
+    d.setDate(d.getDate() + diff); return U.keyOf(d);
+  }
+
   function renderOverlap() {
-    const everyone = [{ uid: S.me.uid, name: S.me.name, availability: S.me.availability || [] }, ...S.players.filter(p => p.uid !== S.me.uid)];
-    const total = everyone.length, counts = {}, who = {};
-    everyone.forEach(p => (p.availability || []).forEach(slot => {
-      counts[slot] = (counts[slot] || 0) + 1;
-      (who[slot] = who[slot] || []).push(p.uid === S.me.uid ? `${p.name} (you)` : p.name);
-    }));
+    const people = peopleList(), { group, chars } = partyGroup(people);
+    const active = group.length >= 2, who = active ? group : people;
+    const total = who.length, counts = {}, free = {};
+    who.forEach(p => p.availability.forEach(slot => { counts[slot] = (counts[slot] || 0) + 1; (free[slot] = free[slot] || []).push(p); }));
+    const nameOf = p => p.me ? `${p.name} (you)` : p.name;
+    const missingIn = slot => who.filter(p => !(free[slot] || []).includes(p)).map(nameOf);
     const bucket = n => n === 0 ? 0 : n / total <= .25 ? 1 : n / total <= .5 ? 2 : n / total <= .75 ? 3 : 4;
     let html = `<table class="grid heat"><thead><tr><th scope="col" class="grid__corner"></th>${DAYS.map(d => `<th scope="col" abbr="${d.label}">${d.short}</th>`).join('')}</tr></thead><tbody>`;
     for (const b of BLOCKS) {
       html += `<tr><th scope="row" title="${esc(b.label)}"><span class="grid__block">${esc(b.short || b.label)}</span></th>`;
       for (const d of DAYS) {
         const slot = `${d.key}-${b.key}`, n = counts[slot] || 0, me = (S.me.availability || []).includes(slot);
-        html += `<td class="heat__cell h${bucket(n)}${me ? ' heat__cell--me' : ''}" tabindex="0" data-heat="${slot}" data-names="${esc((who[slot] || []).join(', '))}" aria-label="${d.label} ${b.label}: ${n} of ${total} free">${n}</td>`;
+        const all = active && n === total;
+        html += `<td class="heat__cell h${bucket(n)}${me ? ' heat__cell--me' : ''}${all ? ' heat__cell--all' : ''}" tabindex="0" data-heat="${slot}" data-names="${esc((free[slot] || []).map(nameOf).join(', '))}" data-missing="${esc(active ? missingIn(slot).join(', ') : '')}" aria-label="${d.label} ${b.label}: ${n} of ${total} free">${n}</td>`;
       }
       html += '</tr>';
     }
     $('#overlap').innerHTML = html + '</tbody></table>';
-    $('#overlap-total').textContent = `${total} player${total === 1 ? '' : 's'}`;
-    const best = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 3);
-    $('#best-windows').innerHTML = best.map(([slot, n]) => {
-      const [dk, bk] = slot.split('-');
-      return `<li><span>${esc(U.dayOf(dk).label)} ${esc(U.blockOf(bk).label)}</span><strong>${n} of ${total}</strong></li>`;
-    }).join('') || '<li><span>No one has marked availability yet.</span></li>';
+    $('#overlap-total').textContent = active ? `${total} players picked` : `${total} player${total === 1 ? '' : 's'}`;
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1] || slotOrder(a[0]) - slotOrder(b[0]));
+    if (active) {
+      $('#best-label').textContent = 'Windows for this party';
+      const top = entries.filter(([, n]) => n >= Math.max(2, total - 1)).slice(0, 6);
+      $('#best-windows').innerHTML = top.map(([slot, n]) => {
+        const missing = missingIn(slot);
+        return `<li class="${n === total ? 'best--all' : ''}"><span class="best__name">${esc(slotLabel(slot))}${missing.length ? `<small>without ${esc(listNames(missing))}</small>` : ''}</span><strong>${n === total ? `All ${total}` : `${n} of ${total}`}</strong>
+          <div class="best__act"><button type="button" class="btn btn--sm" data-action="party-request" data-win="${slot}">Request an expedition</button><button type="button" class="btn btn--sm btn--ghost" data-action="party-post" data-win="${slot}">Post here</button></div></li>`;
+      }).join('') || '<li><span class="best__name">No window has more than one of them free — someone needs to widen their availability.</span></li>';
+    } else {
+      $('#best-label').textContent = 'Best windows to post';
+      $('#best-windows').innerHTML = entries.slice(0, 3).map(([slot, n]) => `<li><span class="best__name">${esc(slotLabel(slot))}</span><strong>${n} of ${total}</strong></li>`).join('')
+        || '<li><span class="best__name">No one has marked availability yet.</span></li>';
+    }
+    renderPartyChips(people, group);
+  }
+
+  function renderPartyChips(people, group) {
+    $('#party-chips').innerHTML = people.map(p => {
+      const chips = p.characters.length
+        ? p.characters.map(c => { const k = partyKey(p.uid, c.id); return `<button type="button" class="chip" aria-pressed="${ui.party.has(k)}" data-pchip="${esc(k)}">${esc(c.name)} <small>${esc(c.level)}</small></button>`; }).join('')
+        : (() => { const k = partyKey(p.uid, ''); return `<button type="button" class="chip" aria-pressed="${ui.party.has(k)}" data-pchip="${esc(k)}">${esc(p.name)} <small>no characters yet</small></button>`; })();
+      return `<div class="chips__group"><span class="chips__owner">${p.me ? 'You' : esc(p.name)}</span>${chips}</div>`;
+    }).join('');
+    const n = ui.party.size;
+    $('#party-summary').textContent = n ? `${n} picked` : 'Pick a party';
+    $('#party-clear').hidden = !n;
+    $('#party-hint').textContent = !n ? 'Pick two or more characters to see when their players line up.'
+      : group.length < 2 ? 'Add a character from another player.'
+      : 'Ringed cells: everyone picked is free. The list below ranks the windows.';
+    if (n) $('#party-picker').open = true;
+  }
+
+  async function partyRequest(win) {
+    const { group, chars } = partyGroup(peopleList());
+    if (group.length < 2) return;
+    const [dk, bk] = win.split('-'), date = nextDateFor(dk);
+    const here = group.filter(p => p.availability.includes(win)), away = group.filter(p => !p.availability.includes(win));
+    const levels = chars.map(c => c.level), band = levels.length ? ` (levels ${Math.min(...levels)}–${Math.max(...levels)})` : '';
+    const text = `${listNames(here.map(p => p.name))} can make ${slotLabel(win)}${away.length ? ` — ${listNames(away.map(p => p.name))} can't` : ''} — next ${fmtLong.format(U.parseKey(date))}${band} — and would like an expedition.`;
+    try { await A.log('request', text, { date, block: bk, party: group.map(p => p.uid) }); toast('Request posted — GMs will see it in Dispatches.', 'ok'); }
+    catch (err) { toast(err.message || 'Could not post the request.', 'no'); }
+  }
+  function partyPrefill(win) {
+    const { chars } = partyGroup(peopleList()), [dk, bk] = win.split('-'), levels = chars.map(c => c.level);
+    return { date: nextDateFor(dk), block: bk, seats: Math.max(4, chars.length), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
   }
 
   function renderMeta() {
@@ -320,13 +388,15 @@
   }
 
   // ------------------------------------------------------------- dialogs
-  function openPost() {
+  function openPost(prefill) {
     const f = $('#post-form');
     f.reset(); $('#post-error').hidden = true;
     const gm = $('[name=gm]', f); if (!gm.value) gm.value = S.me.name;
     const t = new Date(); t.setDate(t.getDate() + 1);
-    const date = $('[name=date]', f); date.value = U.keyOf(t); date.min = U.todayKey();
-    $('#post-block').innerHTML = BLOCKS.map(b => `<option value="${b.key}"${b.key === 'eve' ? ' selected' : ''}>${b.label} · ${b.time}</option>`).join('');
+    const date = $('[name=date]', f); date.value = (prefill && prefill.date) || U.keyOf(t); date.min = U.todayKey();
+    const block = (prefill && prefill.block) || 'eve';
+    $('#post-block').innerHTML = BLOCKS.map(b => `<option value="${b.key}"${b.key === block ? ' selected' : ''}>${b.label} · ${b.time}</option>`).join('');
+    if (prefill) { $('[name=seats]', f).value = prefill.seats; $('[name=minLevel]', f).value = prefill.minLevel; $('[name=maxLevel]', f).value = prefill.maxLevel; }
     $('#post-dialog').showModal();
   }
   async function submitPost(e) {
@@ -433,11 +503,17 @@
 
   // ----------------------------------------------------------------- events
   document.addEventListener('click', e => {
-    const t = e.target.closest('[data-action],[data-char],[data-chip],[data-open],[data-drop],[data-watch],[data-slot],[data-preset],[data-filter]');
+    const t = e.target.closest('[data-action],[data-char],[data-chip],[data-open],[data-drop],[data-watch],[data-slot],[data-preset],[data-filter],[data-pchip]');
     if (!t) return;
     const d = t.dataset;
     if (d.action) return doAction(d.action, t);
     if (!S) return;
+    if (d.pchip !== undefined) {
+      if (ui.party.has(d.pchip)) ui.party.delete(d.pchip); else ui.party.add(d.pchip);
+      renderOverlap();
+      const again = $(`[data-pchip="${CSS.escape(d.pchip)}"]`); if (again) again.focus({ preventScroll: true });
+      return;
+    }
     if (d.char !== undefined) return armed === d.char ? disarm() : arm(d.char);
     if (d.chip !== undefined) return withdraw(d.sess, d.chip);
     if (d.open !== undefined) return armed ? place(d.open, armed) : toast('Pick a character first — tap one in your roster, or drag it onto the seat.', 'hint');
@@ -459,6 +535,9 @@
       case 'char-add': $('#char-rows').insertAdjacentHTML('beforeend', charRow({})); $('#char-rows .char-row:last-child input').focus(); break;
       case 'char-remove': el.closest('.char-row').remove(); break;
       case 'arm-cancel': disarm(); break;
+      case 'party-clear': ui.party.clear(); renderOverlap(); break;
+      case 'party-request': partyRequest(el.dataset.win); break;
+      case 'party-post': openPost(partyPrefill(el.dataset.win)); break;
       case 'mark-read': A.markRead(); break;
       case 'browser-alerts': toggleBrowserAlerts(); break;
       case 'reset':
@@ -478,8 +557,8 @@
   document.addEventListener('mouseover', e => { const c = e.target.closest('[data-heat]'); if (c) showHeat(c); });
   document.addEventListener('focusin', e => { const c = e.target.closest('[data-heat]'); if (c) showHeat(c); });
   function showHeat(c) {
-    const [dk, bk] = c.dataset.heat.split('-');
-    $('#overlap-detail').textContent = `${U.dayOf(dk).label} ${U.blockOf(bk).label}: ${c.dataset.names || 'nobody yet'}`;
+    const missing = c.dataset.missing;
+    $('#overlap-detail').textContent = `${slotLabel(c.dataset.heat)}: ${c.dataset.names || 'nobody yet'}${missing ? ` — not ${missing}` : ''}`;
   }
   setInterval(() => { if (S) renderDispatches(); }, 60000);
 
