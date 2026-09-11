@@ -3,7 +3,10 @@
    State arrives via onState and is treated as read-only here; every change is an adapter call.
 
    Roles: a player has a roster, proposes expeditions and joins them; a GM (flagged on the
-   allowlist) has no roster, posts dated expeditions, schedules proposals, locks and cancels. */
+   allowlist) has no roster, posts dated expeditions, schedules proposals, locks and cancels.
+
+   Availability: a weekly pattern is the baseline; per-date exceptions override it for one
+   date and block. Everything that asks "is X free then" goes through KS.rules.freeOn. */
 (function () {
   'use strict';
   const U = KS.util, R = KS.rules, DAYS = KS.DAYS, BLOCKS = KS.BLOCKS, esc = U.esc;
@@ -18,13 +21,15 @@
   let seenDispatches = null;     // ids already seen — new ones may raise a browser alert
   let availTimer = null, toastTimer = null, profileOpenedOnce = false, resetArmedAt = 0;
   let pendingConfirm = null;     // { key, at } — two-click confirmation for destructive actions
-  const ui = { filter: 'all', party: new Set() };   // party: "uid:charId" keys picked in the overlap panel
+  const ui = { filter: 'all', party: new Set(), availTab: 'pattern', availWeek: null, overlapWeek: null };
 
   const KIND = { new: 'Posted', proposal: 'Proposed', scheduled: 'Scheduled', cancelled: 'Cancelled', lock: 'Roster', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', request: 'Request', note: 'Note' };
   const fmtDay  = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
   const fmtDate = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
   const fmtLong = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   const when = s => `${fmtLong.format(U.parseKey(s.date))}, ${U.blockOf(s.block).label}`;
+  const dateLabel = k => fmtLong.format(U.parseKey(k));
+  const stampLabel = (k, b) => `${fmtLong.format(U.parseKey(k))} ${U.blockOf(b).label}`;
   const byId = id => (S && S.sessions.find(s => s.id === id)) || null;
   const myChar = id => (S && S.me.characters.find(c => c.id === id)) || null;
   const isGM = () => !!(S && S.me && S.me.gm);
@@ -34,11 +39,14 @@
   const proposals = () => live().filter(R.isProposal).sort((a, b) => (b.postedAt || 0) - (a.postedAt || 0));
   const isWatching = id => (S.me.watching || []).includes(id);
   const isMine = e => e.uid === S.me.uid;
+  const firstWeek = () => U.thisMonday();
+  const lastWeek = () => U.addDays(U.thisMonday(), (KS.HORIZON_WEEKS - 1) * 7);
 
   // ------------------------------------------------------------------ boot
   KS.boot = function (adapter) {
     if (KS.booted) return;
     KS.booted = true; A = adapter;
+    ui.availWeek = ui.overlapWeek = U.thisMonday();
     A.start({
       onState(state) { S = state; render(); alertOnNewDispatches(); },
       onStatus(st) {
@@ -56,8 +64,9 @@
     if (!S) return;
     document.body.classList.toggle('is-gm', isGM());
     const a = document.activeElement, d = a && a.dataset;
-    const keep = d ? (d.slot ? `[data-slot="${d.slot}"]` : d.filter ? `[data-filter="${d.filter}"]` : d.watch ? `[data-watch="${d.watch}"]` : d.char ? `[data-char="${d.char}"]` : null) : null;
+    const keep = d ? (d.slot ? `[data-slot="${d.slot}"]` : d.ex ? `[data-ex="${d.ex}"]` : d.filter ? `[data-filter="${d.filter}"]` : d.watch ? `[data-watch="${d.watch}"]` : d.char ? `[data-char="${d.char}"]` : null) : null;
     renderUser(); renderRoster(); renderAvailability(); renderBoard(); renderDispatches(); renderOverlap(); renderMeta(); renderArm();
+    if (KS.renderGcal) KS.renderGcal();
     if (keep) { const el = $(keep); if (el) el.focus({ preventScroll: true }); }
   }
 
@@ -91,9 +100,11 @@
     $('#user-chars').textContent = `${n} character${n === 1 ? '' : 's'}`;
     $('#gm-proposals').textContent = proposals().length;
     $('#avail-h').textContent = gm ? 'When I can run' : 'My availability';
-    $('#avail-hint').textContent = gm
-      ? 'Mark the windows you can run. The overlap grid dims everything else, and proposals are scheduled against these.'
-      : 'Recurring weekly windows, in your local time. Expeditions that land in a marked window are stamped “Fits you”, and everyone’s windows feed the overlap grid.';
+    $('#avail-hint').textContent = ui.availTab === 'dates'
+      ? (gm ? 'Dates override your usual week. Block one you can’t run, open one you normally couldn’t.'
+            : 'Dates override your usual week. Block one you’re away for, open one you normally couldn’t make.')
+      : (gm ? 'The windows you can usually run. The overlap grid dims everything else, and proposals are scheduled against these.'
+            : 'The windows you can usually play. Expeditions landing in one are stamped “Fits you”, and everyone’s windows feed the overlap grid.');
   }
 
   function renderRoster() {
@@ -110,8 +121,17 @@
     $('#roster').innerHTML = html || `<li class="roster__empty">No characters yet. <button type="button" class="linklike" data-action="profile-open">Add one to your roster.</button></li>`;
   }
 
+  // ---- availability: usual week + specific dates ---------------------------
   function renderAvailability() {
-    const av = S.me.availability || [];
+    const av = S.me.availability || [], ex = S.me.exceptions || {};
+    const nEx = Object.keys(ex).length;
+    $('#avail-count').textContent = ui.availTab === 'dates'
+      ? (nEx ? `${nEx} override${nEx === 1 ? '' : 's'}` : 'No overrides')
+      : `${av.length} / ${DAYS.length * BLOCKS.length}`;
+    $$('[data-avtab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.avtab === ui.availTab)));
+    $('#avail-pattern').hidden = ui.availTab !== 'pattern';
+    $('#avail-dates').hidden = ui.availTab !== 'dates';
+
     let html = `<table class="grid avail"><thead><tr><th scope="col" class="grid__corner"></th>${DAYS.map(d => `<th scope="col" abbr="${d.label}">${d.short}</th>`).join('')}</tr></thead><tbody>`;
     for (const b of BLOCKS) {
       html += `<tr><th scope="row" title="${esc(b.label)}"><span class="grid__block">${esc(b.short || b.label)}</span><span class="grid__time">${esc(b.time)}</span></th>`;
@@ -122,7 +142,46 @@
       html += '</tr>';
     }
     $('#avail').innerHTML = html + '</tbody></table>';
-    $('#avail-count').textContent = `${av.length} / ${DAYS.length * BLOCKS.length}`;
+
+    renderAvailDates();
+  }
+
+  function renderAvailDates() {
+    const me = S.me, week = ui.availWeek, dates = U.weekOf(week), today = U.todayKey(), ex = me.exceptions || {};
+    $('#avail-week-label').textContent = weekLabel(week);
+    $$('[data-week^="avail:"]').forEach(b => {
+      const dir = +b.dataset.week.split(':')[1];
+      b.disabled = dir < 0 ? week <= firstWeek() : week >= lastWeek();
+    });
+    let html = `<table class="grid avail"><thead><tr><th scope="col" class="grid__corner"></th>${dates.map((k, i) => {
+      const past = k < today;
+      return `<th scope="col" class="${past ? 'is-past' : ''}${k === today ? ' is-today' : ''}"><span class="grid__dow">${DAYS[i].short}</span><span class="grid__dom">${U.parseKey(k).getDate()}</span></th>`;
+    }).join('')}</tr></thead><tbody>`;
+    for (const b of BLOCKS) {
+      html += `<tr><th scope="row" title="${esc(b.label)}"><span class="grid__block">${esc(b.short || b.label)}</span></th>`;
+      for (const k of dates) {
+        const past = k < today, free = R.freeOn(me, k, b.key), over = R.overridden(me, k, b.key);
+        html += `<td>${past
+          ? '<span class="avail__cell avail__cell--past" aria-hidden="true"></span>'
+          : `<button type="button" class="avail__cell${over ? ' avail__cell--over' : ''}" data-ex="${k}-${b.key}" aria-pressed="${free}" aria-label="${dateLabel(k)} ${b.label}${over ? ', overridden' : ''}" title="${dateLabel(k)} ${b.label}${over ? ` — overridden (usually ${R.inPattern(me, k, b.key) ? 'free' : 'not free'})` : ''}"></button>`}</td>`;
+      }
+      html += '</tr>';
+    }
+    $('#avail-date-grid').innerHTML = html + '</tbody></table>';
+    // Name the overridden dates rather than counting them — a bare count is confusing when
+    // none of them fall in the week on screen.
+    const keys = Object.keys(ex).sort();
+    $('#avail-ex-count').textContent = keys.length
+      ? 'Overriding ' + keys.slice(0, 3).map(k => `${fmtDate.format(U.parseKey(k.slice(0, 10)))} ${U.blockOf(k.slice(11)).short}${ex[k] ? '' : ' ✕'}`).join(', ')
+        + (keys.length > 3 ? ` +${keys.length - 3} more` : '')
+      : 'No overrides — your usual week applies.';
+    $('#avail-ex-clear').hidden = !keys.length;
+  }
+
+  function weekLabel(mondayKey) {
+    const a = U.parseKey(mondayKey), b = U.parseKey(U.addDays(mondayKey, 6));
+    const sameMonth = a.getMonth() === b.getMonth();
+    return sameMonth ? `${fmtDate.format(a)} – ${b.getDate()}` : `${fmtDate.format(a)} – ${fmtDate.format(b)}`;
   }
 
   function renderBoard() {
@@ -182,10 +241,10 @@
     }
     let prefer = '';
     if (prop) {
-      const wins = bestWindows(party.map(e => e.uid), 2), gmw = gmWindows().length > 0;
-      prefer = `<p class="session__prefer">${wins.length
-        ? `Everyone joined can make <strong>${wins.map(w => esc(slotLabel(w))).join('</strong> or <strong>')}</strong>`
-        : 'No window yet where everyone joined is free'}${gmw ? ' <small>(within GM windows)</small>' : ''}.</p>`;
+      const hits = bestDates(party.map(e => e.uid), 2);
+      prefer = `<p class="session__prefer">${hits.length
+        ? `Everyone joined can make <strong>${hits.map(h => esc(stampLabel(h.date, h.block))).join('</strong> or <strong>')}</strong>`
+        : 'No date in the next few weeks suits everyone joined'}.</p>`;
     }
     const whenCol = prop
       ? `<span class="session__block">Proposed</span><span class="session__time">${esc(relTime(s.postedAt || 0))}</span>`
@@ -257,85 +316,105 @@
   }
 
   // ---- overlap + party picker ----------------------------------------------
-  // With nothing picked the heatmap shows every player. Pick characters and it narrows to
-  // their players: ringed cells are windows where every one of them is free. Cells outside
-  // the GMs' windows are dimmed in every view — nothing can be scheduled there.
+  // The heatmap runs over real dates, a week at a time. With nothing picked it shows every
+  // player; pick characters and it narrows to their players — ringed cells are dates where
+  // all of them are free. Cells no GM can run are dimmed.
   const partyKey = (uid, charId) => `${uid}:${charId || ''}`;
   function peopleList() {
     return [
-      { uid: S.me.uid, name: S.me.name, availability: S.me.availability || [], characters: S.me.characters || [], gm: !!S.me.gm, me: true },
-      ...S.players.filter(p => p.uid !== S.me.uid).map(p => ({ uid: p.uid, name: p.name || 'Unnamed', availability: p.availability || [], characters: p.characters || [], gm: !!p.gm, me: false })),
+      Object.assign({}, S.me, { me: true, name: S.me.name, characters: S.me.characters || [] }),
+      ...S.players.filter(p => p.uid !== S.me.uid).map(p => Object.assign({}, p, { me: false, name: p.name || 'Unnamed', characters: p.characters || [] })),
     ];
   }
   const isGMuid = p => p.gm || gmUids().includes(p.uid);
   const playersOnly = () => peopleList().filter(p => !isGMuid(p));
-  function gmWindows() {
-    const set = new Set();
-    peopleList().forEach(p => { if (isGMuid(p)) p.availability.forEach(s => set.add(s)); });
-    return [...set];
+  const gmList = () => peopleList().filter(isGMuid);
+  function gmFreeOn(dateKey, block) {
+    const gms = gmList();
+    if (!gms.length) return true;                       // no GM windows known yet — dim nothing
+    return gms.some(g => R.freeOn(g, dateKey, block));
   }
-  function bestWindows(uids, limit = 2) {
+  const anyGMWindows = () => gmList().some(g => (g.availability || []).length || Object.keys(g.exceptions || {}).length);
+
+  // Every date+block in the horizon where all of `uids` are free and a GM could run it.
+  function bestDates(uids, limit = 3) {
     const people = peopleList().filter(p => uids.includes(p.uid));
     if (!people.length) return [];
-    const gmAv = gmWindows(), counts = {};
-    people.forEach(p => p.availability.forEach(slot => { counts[slot] = (counts[slot] || 0) + 1; }));
-    return Object.entries(counts)
-      .filter(([slot, n]) => n === people.length && (!gmAv.length || gmAv.includes(slot)))
-      .sort((a, b) => slotOrder(a[0]) - slotOrder(b[0]))
-      .slice(0, limit).map(([slot]) => slot);
+    const out = [];
+    for (const date of U.horizon()) {
+      for (const b of BLOCKS) {
+        if (!people.every(p => R.freeOn(p, date, b.key))) continue;
+        if (!gmFreeOn(date, b.key)) continue;
+        out.push({ date, block: b.key });
+        if (out.length >= limit) return out;
+      }
+    }
+    return out;
   }
   function partyGroup(people) {
     const owners = new Set([...ui.party].map(k => k.split(':')[0]));
     const group = people.filter(p => owners.has(p.uid));
     const chars = [];
-    people.forEach(p => p.characters.forEach(c => { if (ui.party.has(partyKey(p.uid, c.id))) chars.push(Object.assign({}, c, { uid: p.uid, owner: p.name })); }));
+    people.forEach(p => (p.characters || []).forEach(c => { if (ui.party.has(partyKey(p.uid, c.id))) chars.push(Object.assign({}, c, { uid: p.uid, owner: p.name })); }));
     return { group, chars };
   }
-  const slotOrder = slot => { const [dk, bk] = slot.split('-'); return DAYS.findIndex(d => d.key === dk) * 10 + U.blockIndex(bk); };
-  const slotLabel = slot => { const [dk, bk] = slot.split('-'); return `${U.dayOf(dk).label} ${U.blockOf(bk).label}`; };
   const listNames = arr => arr.length <= 1 ? arr.join('') : `${arr.slice(0, -1).join(', ')} and ${arr[arr.length - 1]}`;
-  function nextDateFor(dk) {
-    const dow = KS.DAY_KEYS.indexOf(dk), d = new Date(); d.setHours(0, 0, 0, 0);
-    let diff = (dow - d.getDay() + 7) % 7; if (diff === 0) diff = 7;
-    d.setDate(d.getDate() + diff); return U.keyOf(d);
-  }
 
   function renderOverlap() {
     const people = playersOnly(), { group } = partyGroup(people);
     const active = group.length >= 2, who = active ? group : people;
-    const gmAv = gmWindows(), dim = gmAv.length > 0, gm = isGM();
-    const total = who.length, counts = {}, free = {};
-    who.forEach(p => p.availability.forEach(slot => { counts[slot] = (counts[slot] || 0) + 1; (free[slot] = free[slot] || []).push(p); }));
+    const week = ui.overlapWeek, dates = U.weekOf(week), today = U.todayKey();
+    const dim = anyGMWindows(), gm = isGM(), total = who.length;
+    $('#overlap-week-label').textContent = weekLabel(week);
+    $$('[data-week^="overlap:"]').forEach(b => {
+      const dir = +b.dataset.week.split(':')[1];
+      b.disabled = dir < 0 ? week <= firstWeek() : week >= lastWeek();
+    });
     const nameOf = p => p.me ? `${p.name} (you)` : p.name;
-    const missingIn = slot => who.filter(p => !(free[slot] || []).includes(p)).map(nameOf);
     const bucket = n => n === 0 || !total ? 0 : n / total <= .25 ? 1 : n / total <= .5 ? 2 : n / total <= .75 ? 3 : 4;
-    let html = `<table class="grid heat"><thead><tr><th scope="col" class="grid__corner"></th>${DAYS.map(d => `<th scope="col" abbr="${d.label}">${d.short}</th>`).join('')}</tr></thead><tbody>`;
+
+    let html = `<table class="grid heat"><thead><tr><th scope="col" class="grid__corner"></th>${dates.map((k, i) => {
+      const past = k < today;
+      return `<th scope="col" class="${past ? 'is-past' : ''}${k === today ? ' is-today' : ''}"><span class="grid__dow">${DAYS[i].short}</span><span class="grid__dom">${U.parseKey(k).getDate()}</span></th>`;
+    }).join('')}</tr></thead><tbody>`;
     for (const b of BLOCKS) {
       html += `<tr><th scope="row" title="${esc(b.label)}"><span class="grid__block">${esc(b.short || b.label)}</span></th>`;
-      for (const d of DAYS) {
-        const slot = `${d.key}-${b.key}`, n = counts[slot] || 0, me = (S.me.availability || []).includes(slot);
-        const all = active && n === total, out = dim && !gmAv.includes(slot);
-        html += `<td class="heat__cell h${bucket(n)}${me ? ' heat__cell--me' : ''}${all ? ' heat__cell--all' : ''}${out ? ' heat__cell--out' : ''}" tabindex="0" data-heat="${slot}" data-names="${esc((free[slot] || []).map(nameOf).join(', '))}" data-missing="${esc(active ? missingIn(slot).join(', ') : '')}" data-out="${out ? '1' : ''}" aria-label="${d.label} ${b.label}: ${n} of ${total} free${out ? ', outside GM windows' : ''}">${n}</td>`;
+      for (const k of dates) {
+        const past = k < today;
+        const free = who.filter(p => R.freeOn(p, k, b.key));
+        const n = free.length, me = R.freeOn(S.me, k, b.key);
+        const all = active && n === total && total > 0, out = dim && !gmFreeOn(k, b.key);
+        const missing = active ? who.filter(p => !free.includes(p)).map(nameOf) : [];
+        html += `<td class="heat__cell h${bucket(n)}${me ? ' heat__cell--me' : ''}${all ? ' heat__cell--all' : ''}${out ? ' heat__cell--out' : ''}${past ? ' heat__cell--past' : ''}" tabindex="0" data-date="${k}" data-block="${b.key}" data-names="${esc(free.map(nameOf).join(', '))}" data-missing="${esc(missing.join(', '))}" data-out="${out ? '1' : ''}" aria-label="${dateLabel(k)} ${b.label}: ${n} of ${total} free${out ? ', no GM available' : ''}">${past ? '' : n}</td>`;
       }
       html += '</tr>';
     }
     $('#overlap').innerHTML = html + '</tbody></table>';
     $('#overlap-total').textContent = active ? `${total} players picked` : `${total} player${total === 1 ? '' : 's'}`;
     $('#overlap-note').textContent = dim
-      ? (gm ? 'Cells outside your windows are dimmed — change them under “When I can run”.' : 'Cells outside the GM’s windows are dimmed; expeditions only happen inside them.')
+      ? (gm ? 'Dimmed cells are outside the windows you can run — set those under “When I can run”.' : 'Dimmed cells are ones no GM can run.')
       : (gm ? 'Mark when you can run and the grid will dim everything else.' : 'No GM has marked windows yet, so nothing is dimmed.');
-    const entries = Object.entries(counts).filter(([slot]) => !dim || gmAv.includes(slot)).sort((a, b) => b[1] - a[1] || slotOrder(a[0]) - slotOrder(b[0]));
+
+    // Ranked dates across the whole horizon, not just the visible week.
+    const ranked = [];
+    for (const date of U.horizon()) {
+      for (const b of BLOCKS) {
+        if (dim && !gmFreeOn(date, b.key)) continue;
+        const n = who.filter(p => R.freeOn(p, date, b.key)).length;
+        if (n >= (active ? Math.max(2, total - 1) : 1)) ranked.push({ date, block: b.key, n });
+      }
+    }
+    ranked.sort((a, x) => x.n - a.n || (a.date < x.date ? -1 : a.date > x.date ? 1 : U.blockIndex(a.block) - U.blockIndex(x.block)));
     if (active) {
-      $('#best-label').textContent = 'Windows for this party' + (dim ? ' · within GM windows' : '');
-      const top = entries.filter(([, n]) => n >= Math.max(2, total - 1)).slice(0, 6);
-      $('#best-windows').innerHTML = top.map(([slot, n]) => {
-        const missing = missingIn(slot);
-        return `<li class="${n === total ? 'best--all' : ''}"><span class="best__name">${esc(slotLabel(slot))}${missing.length ? `<small>without ${esc(listNames(missing))}</small>` : ''}</span><strong>${n === total ? `All ${total}` : `${n} of ${total}`}</strong>
-          <div class="best__act"><button type="button" class="btn btn--sm player-only" data-action="party-request" data-win="${slot}">Request an expedition</button><button type="button" class="btn btn--sm gm-only" data-action="party-post" data-win="${slot}">Post here</button></div></li>`;
-      }).join('') || '<li><span class="best__name">No window has more than one of them free — someone needs to widen their availability.</span></li>';
+      $('#best-label').textContent = 'Dates for this party';
+      $('#best-windows').innerHTML = ranked.slice(0, 6).map(r => {
+        const missing = who.filter(p => !R.freeOn(p, r.date, r.block)).map(nameOf);
+        return `<li class="${r.n === total ? 'best--all' : ''}"><span class="best__name">${esc(stampLabel(r.date, r.block))}${missing.length ? `<small>without ${esc(listNames(missing))}</small>` : ''}</span><strong>${r.n === total ? `All ${total}` : `${r.n} of ${total}`}</strong>
+          <div class="best__act"><button type="button" class="btn btn--sm player-only" data-action="party-request" data-date="${r.date}" data-block="${r.block}">Request an expedition</button><button type="button" class="btn btn--sm gm-only" data-action="party-post" data-date="${r.date}" data-block="${r.block}">Post here</button></div></li>`;
+      }).join('') || '<li><span class="best__name">No date in the next few weeks suits this party — someone needs to open a date, or widen their usual week.</span></li>';
     } else {
-      $('#best-label').textContent = 'Best windows to post' + (dim ? ' · within GM windows' : '');
-      $('#best-windows').innerHTML = entries.slice(0, 3).map(([slot, n]) => `<li><span class="best__name">${esc(slotLabel(slot))}</span><strong>${n} of ${total}</strong></li>`).join('')
+      $('#best-label').textContent = 'Best dates to post';
+      $('#best-windows').innerHTML = ranked.slice(0, 3).map(r => `<li><span class="best__name">${esc(stampLabel(r.date, r.block))}</span><strong>${r.n} of ${total}</strong></li>`).join('')
         || '<li><span class="best__name">No one has marked availability yet.</span></li>';
     }
     renderPartyChips(people, group);
@@ -343,8 +422,9 @@
 
   function renderPartyChips(people, group) {
     $('#party-chips').innerHTML = people.map(p => {
-      const chips = p.characters.length
-        ? p.characters.map(c => { const k = partyKey(p.uid, c.id); return `<button type="button" class="chip" aria-pressed="${ui.party.has(k)}" data-pchip="${esc(k)}">${esc(c.name)} <small>${esc(c.level)}</small></button>`; }).join('')
+      const chars = p.characters || [];
+      const chips = chars.length
+        ? chars.map(c => { const k = partyKey(p.uid, c.id); return `<button type="button" class="chip" aria-pressed="${ui.party.has(k)}" data-pchip="${esc(k)}">${esc(c.name)} <small>${esc(c.level)}</small></button>`; }).join('')
         : (() => { const k = partyKey(p.uid, ''); return `<button type="button" class="chip" aria-pressed="${ui.party.has(k)}" data-pchip="${esc(k)}">${esc(p.name)} <small>no characters yet</small></button>`; })();
       return `<div class="chips__group"><span class="chips__owner">${p.me ? 'You' : esc(p.name)}</span>${chips}</div>`;
     }).join('') || '<p class="hint hint--inline">No players have signed in yet.</p>';
@@ -353,33 +433,31 @@
     $('#party-clear').hidden = !n;
     $('#party-hint').textContent = !n ? 'Pick two or more characters to see when their players line up.'
       : group.length < 2 ? 'Add a character from another player.'
-      : 'Ringed cells: everyone picked is free. The list below ranks the windows.';
+      : 'Ringed cells: everyone picked is free. The list below ranks dates across the next few weeks.';
     if (n) $('#party-picker').open = true;
   }
 
-  async function partyRequest(win) {
+  async function partyRequest(date, block) {
     const { group, chars } = partyGroup(playersOnly());
     if (group.length < 2) return;
-    const [dk, bk] = win.split('-'), date = nextDateFor(dk);
-    const here = group.filter(p => p.availability.includes(win)), away = group.filter(p => !p.availability.includes(win));
+    const here = group.filter(p => R.freeOn(p, date, block)), away = group.filter(p => !R.freeOn(p, date, block));
     const levels = chars.map(c => c.level), band = levels.length ? ` (levels ${Math.min(...levels)}–${Math.max(...levels)})` : '';
-    const text = `${listNames(here.map(p => p.name))} can make ${slotLabel(win)}${away.length ? ` — ${listNames(away.map(p => p.name))} can't` : ''} — next ${fmtLong.format(U.parseKey(date))}${band} — and would like an expedition.`;
-    try { await A.log('request', text, { date, block: bk, party: group.map(p => p.uid) }); toast('Request posted — the GM will see it in Dispatches.', 'ok'); }
+    const text = `${listNames(here.map(p => p.name))} can make ${stampLabel(date, block)}${away.length ? ` — ${listNames(away.map(p => p.name))} can't` : ''}${band} — and would like an expedition.`;
+    try { await A.log('request', text, { date, block, party: group.map(p => p.uid) }); toast('Request posted — the GM will see it in Dispatches.', 'ok'); }
     catch (err) { toast(err.message || 'Could not post the request.', 'no'); }
   }
-  function prefillFor(win, levels, count) {
-    const [dk, bk] = win.split('-');
-    return { date: nextDateFor(dk), block: bk, seats: Math.max(4, count), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
+  function prefillFor(date, block, levels, count) {
+    return { date, block, seats: Math.max(4, count), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
   }
-  function partyPrefill(win) {
+  function partyPrefill(date, block) {
     const { chars } = partyGroup(playersOnly());
-    return prefillFor(win, chars.map(c => c.level), chars.length);
+    return prefillFor(date, block, chars.map(c => c.level), chars.length);
   }
   function schedulePrefill(s) {
-    const party = s.party || [], levels = party.map(e => e.level), wins = bestWindows(party.map(e => e.uid), 1);
-    const base = wins.length ? prefillFor(wins[0], levels, party.length)
+    const party = s.party || [], levels = party.map(e => e.level), hits = bestDates(party.map(e => e.uid), 1);
+    const base = hits.length ? prefillFor(hits[0].date, hits[0].block, levels, party.length)
       : { date: null, block: 'eve', seats: Math.max(4, party.length), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
-    return Object.assign(base, { sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '', joined: party.length, hasWindow: wins.length > 0 });
+    return Object.assign(base, { sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '', joined: party.length, hasWindow: hits.length > 0 });
   }
 
   function renderMeta() {
@@ -422,7 +500,8 @@
     try {
       await A.seat(sessId, ch);
       disarm();
-      toast(prop ? `${ch.name} joined “${sess.title}”.` : `${ch.name} seated on “${sess.title}”.`, 'ok');
+      if (prop) toast(`${ch.name} joined “${sess.title}”.`, 'ok');
+      else toast(`${ch.name} seated on “${sess.title}”.${R.fits(S.me, sess) ? '' : ' Note: you are not marked free then.'}`, 'ok');
       if (prop) await A.log('note', `${ch.name} (${S.me.name}) joined the proposal “${sess.title}”.`, { sessionId: sessId });
       else await A.log('seat', `${ch.name} (${S.me.name}) is seated on “${sess.title}” — ${when(sess)}.`, { sessionId: sessId, date: sess.date, block: sess.block });
       if (willFill) await A.log('full', `“${sess.title}” is now full.`, { sessionId: sessId });
@@ -462,6 +541,7 @@
     toast(on ? `Watching “${s.title}” — you'll be told when ${R.isProposal(s) ? 'it is scheduled' : 'a seat opens'}.` : `No longer watching “${s.title}”.`, 'hint');
   }
 
+  // ---- availability edits --------------------------------------------------
   async function toggleAvail(slot) {
     const a = (S.me.availability || []).slice(), i = a.indexOf(slot);
     if (i < 0) a.push(slot); else a.splice(i, 1);
@@ -475,15 +555,32 @@
     if (name === 'weekends') add(['sat', 'sun'].flatMap(d => BLOCKS.map(b => `${d}-${b.key}`)));
     await A.setAvailability(a); noteAvail();
   }
+  // Clicking a date cell flips that date's answer. If the new answer matches the usual week
+  // the override is dropped instead of stored, so exceptions never accumulate needlessly.
+  async function toggleException(key) {
+    const dateKey = key.slice(0, 10), block = key.slice(11);
+    const me = S.me, want = !R.freeOn(me, dateKey, block);
+    const ex = Object.assign({}, me.exceptions || {});
+    if (want === R.inPattern(me, dateKey, block)) delete ex[key]; else ex[key] = want;
+    await A.setExceptions(R.pruneExceptions(ex)); noteAvail();
+  }
+  function clearExceptions() {
+    const n = Object.keys(S.me.exceptions || {}).length;
+    if (!n) return;
+    confirmTwice('clear-ex', `Drop all ${n} date override${n === 1 ? '' : 's'}?`, async () => {
+      await A.setExceptions({}); toast('Date overrides cleared — your usual week applies.', 'ok'); noteAvail();
+    });
+  }
   // One dispatch per editing session, not one per cell: wait for a pause, then refresh my most
   // recent availability line if it is under an hour old instead of adding another.
   function noteAvail() {
     clearTimeout(availTimer);
     availTimer = setTimeout(async () => {
-      const n = (S.me.availability || []).length;
+      const n = (S.me.availability || []).length, ex = Object.keys(S.me.exceptions || {}).length;
+      const tail = ex ? `, with ${ex} date override${ex === 1 ? '' : 's'}` : '';
       const text = isGM()
-        ? `GM ${S.me.name} can run in ${n} window${n === 1 ? '' : 's'} a week.`
-        : `${S.me.name} updated availability — free in ${n} window${n === 1 ? '' : 's'} a week.`;
+        ? `GM ${S.me.name} can run in ${n} window${n === 1 ? '' : 's'} a week${tail}.`
+        : `${S.me.name} updated availability — free in ${n} window${n === 1 ? '' : 's'} a week${tail}.`;
       const recent = S.dispatches.find(d => d.kind === 'avail' && d.uid === S.me.uid && Date.now() - d.ts < 3600e3);
       try { if (recent && A.relog) await A.relog(recent.id, text); else await A.log('avail', text); }
       catch (e) { /* the feed line is a courtesy; the availability itself is already saved */ }
@@ -552,7 +649,7 @@
     $('#post-h').textContent = p.sessionId ? 'Schedule the proposal' : 'Post an expedition';
     $('#post-submit').textContent = p.sessionId ? 'Schedule it' : 'Post to the board';
     const note = $('#post-note'); note.hidden = !p.sessionId;
-    if (p.sessionId) note.innerHTML = `Scheduling <strong>${esc(p.title)}</strong> — ${p.joined} joined. ${p.hasWindow ? 'The date and window below are where they are all free' : 'No window fits everyone joined yet, so pick one'}; seats and levels are set from the party.`;
+    if (p.sessionId) note.innerHTML = `Scheduling <strong>${esc(p.title)}</strong> — ${p.joined} joined. ${p.hasWindow ? 'The date below is the soonest one where they are all free and you can run' : 'No date in the next few weeks suits everyone joined, so pick one'}; seats and levels are set from the party.`;
     $('#post-dialog').showModal();
   }
   async function submitPost(e) {
@@ -672,7 +769,7 @@
   }
   function concernsMe(d) {
     const sess = d.sessionId ? byId(d.sessionId) : null;
-    const fitsMe = d.date && d.block ? (S.me.availability || []).includes(`${U.weekdayOf(d.date)}-${d.block}`) : false;
+    const fitsMe = d.date && d.block ? R.freeOn(S.me, d.date, d.block) : false;
     const involved = sess && (isWatching(sess.id) || R.myEntry(S.me, sess));
     if (d.kind === 'open' && sess && isWatching(sess.id)) return 'watching';
     if (d.kind === 'open' && fitsMe && S.me.prefs && S.me.prefs.alertOnOpenSeat && !(sess && R.myEntry(S.me, sess))) return 'fits';
@@ -693,14 +790,27 @@
     const el = $(`.session[data-id="${CSS.escape(sessId)}"]`);
     if (el) { el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); }
   }
+  KS.toast = toast;                       // the calendar-sync module reports through this
+  KS.state = () => S;
+  KS.adapter = () => A;
+  KS.isGM = isGM;
+  KS.refreshAvail = () => { if (S) { renderAvailability(); renderOverlap(); } };
 
   // ----------------------------------------------------------------- events
   document.addEventListener('click', e => {
-    const t = e.target.closest('[data-action],[data-gmremove],[data-char],[data-chip],[data-open],[data-drop],[data-watch],[data-slot],[data-preset],[data-filter],[data-pchip]');
+    const t = e.target.closest('[data-action],[data-gmremove],[data-char],[data-chip],[data-open],[data-drop],[data-watch],[data-slot],[data-ex],[data-preset],[data-filter],[data-pchip],[data-avtab],[data-week]');
     if (!t) return;
     const d = t.dataset;
     if (d.action) return doAction(d.action, t);
     if (!S) return;
+    if (d.avtab !== undefined) { ui.availTab = d.avtab; renderAvailability(); renderUser(); return; }
+    if (d.week !== undefined) {
+      const [which, dir] = d.week.split(':');
+      const key = which === 'avail' ? 'availWeek' : 'overlapWeek';
+      const next = U.addDays(ui[key], +dir * 7);
+      if (next >= firstWeek() && next <= lastWeek()) { ui[key] = next; which === 'avail' ? renderAvailability() : renderOverlap(); }
+      return;
+    }
     if (d.gmremove !== undefined) return gmRemove(d.sess, d.gmremove, d.gmuid);
     if (d.pchip !== undefined) {
       if (ui.party.has(d.pchip)) ui.party.delete(d.pchip); else ui.party.add(d.pchip);
@@ -714,6 +824,7 @@
     if (d.drop !== undefined) { if (armed) place(d.drop, armed); return; }
     if (d.watch !== undefined) return toggleWatch(d.watch);
     if (d.slot !== undefined) return toggleAvail(d.slot);
+    if (d.ex !== undefined) return toggleException(d.ex);
     if (d.preset !== undefined) return preset(d.preset);
     if (d.filter !== undefined) { ui.filter = d.filter; renderBoard(); }
   });
@@ -737,11 +848,14 @@
       case 'char-add': $('#char-rows').insertAdjacentHTML('beforeend', charRow({})); $('#char-rows .char-row:last-child input').focus(); break;
       case 'char-remove': el.closest('.char-row').remove(); break;
       case 'arm-cancel': disarm(); break;
+      case 'clear-exceptions': clearExceptions(); break;
       case 'party-clear': ui.party.clear(); renderOverlap(); break;
-      case 'party-request': partyRequest(el.dataset.win); break;
-      case 'party-post': openPost(partyPrefill(el.dataset.win)); break;
+      case 'party-request': partyRequest(el.dataset.date, el.dataset.block); break;
+      case 'party-post': openPost(partyPrefill(el.dataset.date, el.dataset.block)); break;
       case 'mark-read': A.markRead(); break;
       case 'browser-alerts': toggleBrowserAlerts(); break;
+      case 'gcal-sync': if (KS.gcalSync) KS.gcalSync(); break;
+      case 'gcal-clear': if (KS.gcalClear) KS.gcalClear(); break;
       case 'reset':
         // Two clicks within a few seconds — no native confirm(), which sandboxed embeds block.
         if (!A.reset) break;
@@ -757,11 +871,11 @@
   $('#profile-form').addEventListener('submit', submitProfile);
   $('#pref-openseat').addEventListener('change', e => A.setPrefs(Object.assign({}, S.me.prefs || {}, { alertOnOpenSeat: e.target.checked })));
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && armed) disarm(); });
-  document.addEventListener('mouseover', e => { const c = e.target.closest('[data-heat]'); if (c) showHeat(c); });
-  document.addEventListener('focusin', e => { const c = e.target.closest('[data-heat]'); if (c) showHeat(c); });
+  document.addEventListener('mouseover', e => { const c = e.target.closest('[data-date][data-block]'); if (c) showHeat(c); });
+  document.addEventListener('focusin', e => { const c = e.target.closest('[data-date][data-block]'); if (c) showHeat(c); });
   function showHeat(c) {
     const missing = c.dataset.missing, out = c.dataset.out;
-    $('#overlap-detail').textContent = `${slotLabel(c.dataset.heat)}: ${c.dataset.names || 'nobody yet'}${missing ? ` — not ${missing}` : ''}${out ? ' · outside GM windows' : ''}`;
+    $('#overlap-detail').textContent = `${stampLabel(c.dataset.date, c.dataset.block)}: ${c.dataset.names || 'nobody yet'}${missing ? ` — not ${missing}` : ''}${out ? ' · no GM available' : ''}`;
   }
   setInterval(() => { if (S) renderDispatches(); }, 60000);
 

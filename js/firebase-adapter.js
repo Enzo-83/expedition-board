@@ -54,7 +54,7 @@ class FirebaseAdapter {
         firstRun = true;
         await F.setDoc(ref, {
           name: user.displayName || 'New player', handle: (user.email || '').split('@')[0], discord: '', role: 'Player',
-          characters: [], availability: [], watching: [], prefs: { alertOnOpenSeat: true, browserAlerts: false },
+          characters: [], availability: [], exceptions: {}, watching: [], prefs: { alertOnOpenSeat: true, browserAlerts: false },
           readAt: Date.now(), createdAt: Date.now(),
         });
       }
@@ -113,6 +113,9 @@ class FirebaseAdapter {
 
   async saveProfile(p) { await this.F.updateDoc(this._me(), clean({ name: p.name, handle: p.handle, discord: p.discord, characters: p.characters, updatedAt: Date.now() })); }
   async setAvailability(a) { await this.F.updateDoc(this._me(), { availability: a }); }
+  // Exceptions are replaced wholesale (they are pruned of past dates first), so a stale
+  // client can never resurrect an override the player already dropped.
+  async setExceptions(ex) { await this.F.updateDoc(this._me(), { exceptions: ex || {} }); }
   async setWatching(w) { await this.F.updateDoc(this._me(), { watching: w }); }
   async setPrefs(prefs) { await this.F.updateDoc(this._me(), { prefs: clean(prefs) }); }
   async markRead() { await this.F.updateDoc(this._me(), { readAt: Date.now() }); }

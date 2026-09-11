@@ -86,12 +86,31 @@
         <h2 id="avail-h">My availability</h2>
         <span class="label" id="avail-count">—</span>
       </div>
+      <div class="tabs" role="tablist" aria-label="Availability view">
+        <button type="button" role="tab" data-avtab="pattern" aria-selected="true">Usual week</button>
+        <button type="button" role="tab" data-avtab="dates" aria-selected="false">Specific dates</button>
+      </div>
       <div class="panel__body">
-        <div id="avail"></div>
-        <div class="presets" role="group" aria-label="Availability presets">
-          <button type="button" class="btn btn--sm" data-preset="weeknights">+ Weeknights</button>
-          <button type="button" class="btn btn--sm" data-preset="weekends">+ Weekends</button>
-          <button type="button" class="btn btn--sm btn--ghost" data-preset="clear">Clear</button>
+        <div id="avail-pattern">
+          <div id="avail"></div>
+          <div class="presets" role="group" aria-label="Availability presets">
+            <button type="button" class="btn btn--sm" data-preset="weeknights">+ Weeknights</button>
+            <button type="button" class="btn btn--sm" data-preset="weekends">+ Weekends</button>
+            <button type="button" class="btn btn--sm btn--ghost" data-preset="clear">Clear</button>
+          </div>
+        </div>
+        <div id="avail-dates" hidden>
+          <div class="weeknav">
+            <button type="button" data-week="avail:-1" aria-label="Previous week">‹</button>
+            <span id="avail-week-label">—</span>
+            <button type="button" data-week="avail:1" aria-label="Next week">›</button>
+          </div>
+          <div id="avail-date-grid"></div>
+          <div class="row picker__foot">
+            <p class="hint hint--inline" id="avail-ex-count"></p>
+            <button type="button" class="btn btn--sm btn--ghost" data-action="clear-exceptions" hidden id="avail-ex-clear">Clear all</button>
+          </div>
+          <div id="gcal" class="gcal gm-only"></div>
         </div>
         <p class="hint hint--flush" id="avail-hint"></p>
       </div>
@@ -163,6 +182,11 @@
             <button type="button" class="btn btn--sm btn--ghost" id="party-clear" data-action="party-clear" hidden>Clear</button>
           </div>
         </details>
+        <div class="weeknav">
+          <button type="button" data-week="overlap:-1" aria-label="Previous week">‹</button>
+          <span id="overlap-week-label">—</span>
+          <button type="button" data-week="overlap:1" aria-label="Next week">›</button>
+        </div>
         <div id="overlap"></div>
         <div class="heat-legend" aria-hidden="true">
           <span>Fewer</span><i class="h0"></i><i class="h1"></i><i class="h2"></i><i class="h3"></i><i class="h4"></i><span>More</span>

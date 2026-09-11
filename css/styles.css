@@ -112,7 +112,9 @@ body.is-gated .layout, body.is-gated .colophon, body.is-gated .masthead__meta { 
 .area-side { display: contents; }
 .area-user { grid-area: user; }
 .area-avail { grid-area: avail; }
-.area-board { grid-area: board; min-width: 0; }
+/* The session rows size themselves against this column, not the window — the three-column
+   page layout makes the board much narrower than the viewport. */
+.area-board { grid-area: board; min-width: 0; container-type: inline-size; container-name: board; }
 .area-rail { grid-area: rail; display: grid; gap: var(--gutter); align-content: start; }
 
 @media (min-width: 820px) {
@@ -121,7 +123,7 @@ body.is-gated .layout, body.is-gated .colophon, body.is-gated .masthead__meta { 
   .area-side .panel + .panel { margin-top: var(--gutter); }
   .area-rail { grid-template-columns: 1fr 1fr; }
 }
-@media (min-width: 1200px) {
+@media (min-width: 1360px) {
   .layout { grid-template-columns: 300px minmax(0, 1fr) 320px; grid-template-areas: "side board rail"; }
   .area-side { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow: auto; }
   .area-rail { grid-template-columns: 1fr; }
@@ -283,7 +285,7 @@ body.is-armed .seat--open, body.is-dragging-char .seat--open { border-style: sol
 .empty { padding: 40px 20px; text-align: center; border: 1px dashed var(--hair); margin-top: 20px; color: var(--ink-3); }
 .empty h4 { font-size: 20px; color: var(--ink); margin-bottom: 6px; }
 
-@media (max-width: 1000px) {
+@container board (max-width: 760px) {
   .session { grid-template-columns: 92px minmax(0, 1fr) 64px; grid-template-areas: "when body band" "seats seats actions"; }
   .session__when { grid-area: when; }
   .session__body { grid-area: body; }
@@ -291,10 +293,21 @@ body.is-armed .seat--open, body.is-dragging-char .seat--open { border-style: sol
   .session__seats { grid-area: seats; }
   .session__actions { grid-area: actions; align-self: end; }
 }
-@media (max-width: 560px) {
+@container board (max-width: 440px) {
   .session { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "when band" "body body" "seats seats" "actions actions"; gap: 10px; }
   .session__when { display: flex; gap: 8px; align-items: baseline; }
   .session__actions { justify-content: flex-start; }
+}
+/* Browsers without container queries keep the old viewport-based collapse. */
+@supports not (container-type: inline-size) {
+  @media (max-width: 1000px) {
+    .session { grid-template-columns: 92px minmax(0, 1fr) 64px; grid-template-areas: "when body band" "seats seats actions"; }
+    .session__when { grid-area: when; }
+    .session__body { grid-area: body; }
+    .session__band { grid-area: band; }
+    .session__seats { grid-area: seats; }
+    .session__actions { grid-area: actions; align-self: end; }
+  }
 }
 
 /* ---------- dispatches ---------- */
@@ -344,6 +357,35 @@ dialog::backdrop { background: rgba(30, 27, 23, .55); }
 .toast.is-on { opacity: 1; transform: none; }
 .toast--no { border-left-color: var(--paper-3); }
 .toast--hint { border-left-color: var(--ink-3); }
+
+/* ---------- tabs + week navigation ---------- */
+.tabs { display: flex; border-bottom: 1px solid var(--rule); }
+.tabs button { flex: 1; padding: 8px 10px; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); border-right: 1px solid var(--hair); }
+.tabs button:last-child { border-right: 0; }
+.tabs button:hover { background: var(--paper-4); color: var(--ink); }
+.tabs button[aria-selected=true] { background: var(--ink); color: var(--paper-2); }
+.weeknav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.weeknav span { font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+.weeknav button { border: 1px solid var(--hair); width: 26px; height: 24px; font-size: 15px; line-height: 1; color: var(--ink-2); }
+.weeknav button:hover:not(:disabled) { border-color: var(--ink); background: var(--paper-4); }
+.weeknav button:disabled { opacity: .35; }
+.grid__dow { display: block; font-size: 9.5px; letter-spacing: .1em; color: var(--ink-3); }
+.grid__dom { display: block; font-size: 12px; font-weight: 600; color: var(--ink); letter-spacing: 0; }
+.grid th.is-past { opacity: .35; }
+.grid th.is-today .grid__dom { color: var(--crimson); }
+.grid th.is-today .grid__dom::after { content: ""; display: block; height: 2px; background: var(--crimson); margin-top: 2px; }
+.avail__cell--past { border: 1px solid var(--hair); background: repeating-linear-gradient(45deg, transparent, transparent 3px, var(--paper-3) 3px, var(--paper-3) 4px); opacity: .5; }
+/* An overridden date carries a corner mark so the usual week stays readable underneath. */
+.avail__cell--over::before { content: ""; position: absolute; right: 2px; top: 2px; width: 5px; height: 5px; background: var(--crimson); z-index: 1; }
+.avail__cell[aria-pressed=true].avail__cell--over::before { background: var(--paper-2); }
+td.heat__cell--past { background: transparent; opacity: .3; }
+
+/* ---------- Google Calendar sync (GM) ---------- */
+.gcal { margin-top: 12px; border-top: 1px solid var(--hair); padding-top: 10px; display: grid; gap: 8px; }
+.gcal__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.gcal__state { font-size: 11.5px; color: var(--ink-3); }
+.gcal__state--on { color: var(--crimson); font-weight: 500; }
+.gcal .row { gap: 6px; }
 
 /* ---------- roles: GM vs player ---------- */
 body:not(.is-gm) .gm-only, body.is-gm .player-only { display: none !important; }

@@ -5,7 +5,8 @@
      start({ onState, onStatus })   begin; onState(state) on every change, onStatus({mode, connected, user, error})
      signIn() / signOut()
      saveProfile({ name, handle, discord, characters })
-     setAvailability(slots[])  setWatching(ids[])  setPrefs(prefs)  markRead()
+     setAvailability(slots[])  setExceptions({"YYYY-MM-DD-block": bool})  setWatching(ids[])
+     setPrefs(prefs)  markRead()
      postSession(session) -> id                       GM: a dated expedition
      propose({ title, region, notes, character }) -> id   player: a proposal, joined with one character
      schedule(id, fields)                             GM: proposal -> scheduled expedition
@@ -57,6 +58,7 @@ window.KS = window.KS || {};
     async signOut() {}
     async saveProfile(p) { Object.assign(this.state.me, p); this._emit(); }
     async setAvailability(a) { this.state.me.availability = a; this._emit(); }
+    async setExceptions(ex) { this.state.me.exceptions = ex; this._emit(); }
     async setWatching(w) { this.state.me.watching = w; this._emit(); }
     async setPrefs(prefs) { this.state.me.prefs = prefs; this._emit(); }
     async markRead() { this.state.me.readAt = Date.now(); this._emit(); }

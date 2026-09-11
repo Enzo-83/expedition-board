@@ -15,12 +15,13 @@ window.KS = window.KS || {};
     { key: 'sun', short: 'S', label: 'Sunday' },
   ];
   KS.BLOCKS = [
-    { key: 'morn', label: 'Morning',   short: 'Morn', time: '09:00–12:00' },
-    { key: 'aft',  label: 'Afternoon', short: 'Aft',  time: '13:00–17:00' },
-    { key: 'eve',  label: 'Evening',   short: 'Eve',  time: '18:00–22:00' },
-    { key: 'late', label: 'Late',      short: 'Late', time: '22:00–01:00' },
+    { key: 'morn', label: 'Morning',   short: 'Morn', time: '09:00–12:00', from: 9,  to: 12 },
+    { key: 'aft',  label: 'Afternoon', short: 'Aft',  time: '13:00–17:00', from: 13, to: 17 },
+    { key: 'eve',  label: 'Evening',   short: 'Eve',  time: '18:00–22:00', from: 18, to: 22 },
+    { key: 'late', label: 'Late',      short: 'Late', time: '22:00–01:00', from: 22, to: 25 },
   ];
   KS.DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']; // Date#getDay order
+  KS.HORIZON_WEEKS = 8;   // how far ahead the date views go
 
   const pad = n => String(n).padStart(2, '0');
   const U = KS.util = {
@@ -39,21 +40,51 @@ window.KS = window.KS || {};
     sortSessions: list => list.slice().sort((a, b) => a.date === b.date
       ? U.blockIndex(a.block) - U.blockIndex(b.block)
       : (a.date < b.date ? -1 : 1)),
+    // --- dates -------------------------------------------------------------
+    addDays: (key, n) => { const d = U.parseKey(key); d.setDate(d.getDate() + n); return U.keyOf(d); },
+    mondayKeyOf: d => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return U.keyOf(x); },
+    thisMonday: () => U.mondayKeyOf(new Date()),
+    weekOf: mondayKey => KS.DAYS.map((_, i) => U.addDays(mondayKey, i)),
+    // Every date from today to the end of the horizon, in order.
+    horizon: () => {
+      const out = [], today = U.todayKey(), end = U.addDays(U.thisMonday(), KS.HORIZON_WEEKS * 7 - 1);
+      for (let k = today; k <= end; k = U.addDays(k, 1)) out.push(k);
+      return out;
+    },
   };
 
   // Rules shared by the UI and by both adapters (the Firestore adapter re-runs them
   // inside a transaction against the fresh document, so two players can't take one seat).
   //
+  // Availability is a weekly pattern (`availability`: ["mon-eve", …]) plus per-date
+  // exceptions (`exceptions`: { "2026-09-17-eve": false }) that override it for one date
+  // and one block. An exception wins wherever it exists; the pattern is the baseline.
+  //
   // A session is either a *proposal* (player-made: no date, no seat cap, no level band —
   // it waits for a GM) or *scheduled* (GM-made or GM-scheduled from a proposal), or
   // *cancelled*. Documents written before statuses existed count as scheduled.
   const R = KS.rules = {
+    exKey: (dateKey, block) => `${dateKey}-${block}`,
+    inPattern: (p, dateKey, block) => (p.availability || []).includes(U.weekdayOf(dateKey) + '-' + block),
+    overridden: (p, dateKey, block) => !!(p.exceptions && Object.prototype.hasOwnProperty.call(p.exceptions, R.exKey(dateKey, block))),
+    freeOn(p, dateKey, block) {
+      if (!p || !dateKey) return false;
+      if (R.overridden(p, dateKey, block)) return !!p.exceptions[R.exKey(dateKey, block)];
+      return R.inPattern(p, dateKey, block);
+    },
+    // Exceptions for dates already past are dead weight; drop them whenever we write.
+    pruneExceptions(ex) {
+      const today = U.todayKey(), out = {};
+      for (const k of Object.keys(ex || {})) if (k.slice(0, 10) >= today) out[k] = ex[k];
+      return out;
+    },
+
     statusOf: s => s.status || (s.date ? 'scheduled' : 'proposed'),
     isProposal: s => R.statusOf(s) === 'proposed',
     isLive: s => R.statusOf(s) !== 'cancelled',
     openSeats: s => R.isProposal(s) ? Infinity : Math.max(0, (s.seats | 0) - (s.party || []).length),
     isPast: s => !R.isProposal(s) && s.date < U.todayKey(),
-    fits: (me, s) => !!me && !R.isProposal(s) && (me.availability || []).includes(U.slotOf(s)),
+    fits: (me, s) => !!me && !R.isProposal(s) && R.freeOn(me, s.date, s.block),
     myEntry: (me, s) => (s.party || []).find(e => e.uid === me.uid) || null,
     eligibility(state, sess, ch, opts = {}) {
       const no = reason => ({ ok: false, reason });
@@ -89,10 +120,11 @@ window.KS = window.KS || {};
     };
     const H = 3600e3, now = Date.now();
 
-    const P = (uid, name, availability, characters) => ({ uid, name, availability, characters });
+    const P = (uid, name, availability, characters, exceptions) => ({ uid, name, availability, characters, exceptions: exceptions || {} });
     const players = [
       P('p-wen',     'Wen',     ['mon-eve', 'tue-eve', 'wed-eve', 'thu-eve', 'thu-late', 'sat-eve', 'sat-late', 'sun-aft', 'sun-eve'],
-        [{ id: 'p-wen-1', name: 'Thordak Runehammer', level: 4 }, { id: 'p-wen-2', name: 'Thalen Whiskerdust', level: 2 }]),
+        [{ id: 'p-wen-1', name: 'Thordak Runehammer', level: 4 }, { id: 'p-wen-2', name: 'Thalen Whiskerdust', level: 2 }],
+        { [`${next(3, 1)}-aft`]: true }),                       // took a Wednesday afternoon off work
       P('p-marek',   'Marek',   ['thu-eve', 'fri-eve', 'fri-late', 'sat-aft', 'sat-eve', 'sat-late', 'sun-aft'],
         [{ id: 'p-marek-1', name: 'Elethil Lief Shadren', level: 4 }]),
       P('p-priya',   'Priya',   ['mon-eve', 'thu-eve', 'sat-morn', 'sat-aft', 'sat-eve', 'sun-morn', 'sun-aft', 'sun-eve'],
@@ -106,7 +138,8 @@ window.KS = window.KS || {};
       P('p-cass',    'Cass',    ['mon-eve', 'tue-eve', 'wed-eve', 'thu-eve', 'sat-aft', 'sat-eve', 'sun-eve'],
         [{ id: 'p-cass-1', name: 'M.A.K.E.R.', level: 3 }]),
       P('p-tess',    'Tess',    ['thu-eve', 'fri-eve', 'sat-morn', 'sat-aft', 'sat-eve', 'sun-aft'],
-        [{ id: 'p-tess-1', name: 'Taerik Altavin', level: 5 }, { id: 'p-tess-2', name: 'Elias Finch', level: 5 }, { id: 'p-tess-3', name: 'Dínen von Spreller', level: 4 }]),
+        [{ id: 'p-tess-1', name: 'Taerik Altavin', level: 5 }, { id: 'p-tess-2', name: 'Elias Finch', level: 5 }, { id: 'p-tess-3', name: 'Dínen von Spreller', level: 4 }],
+        { [`${next(6, 1)}-eve`]: false, [`${next(6, 1)}-aft`]: false }),   // away that Saturday
       // GMs are players too, with windows but no characters; the board dims everything outside their windows.
       Object.assign(P('gm-imre', 'Imre', ['tue-eve', 'sat-morn', 'sat-aft', 'sun-morn', 'sun-aft'], []), { gm: true }),
     ];
@@ -119,6 +152,7 @@ window.KS = window.KS || {};
     const me = asGM
       ? { uid: 'local', name: 'Rowan Ashby', handle: 'rowan', discord: 'rowan_a', role: 'GM', gm: true, characters: [],
           availability: ['thu-eve', 'thu-late', 'fri-eve', 'sat-eve', 'sat-late', 'sun-aft', 'sun-eve'],
+          exceptions: { [`${next(4)}-eve`]: false },            // one Thursday you can't run
           watching: [], prefs: { alertOnOpenSeat: false, browserAlerts: false }, readAt: now - 3 * H }
       : { uid: 'local', name: 'Rowan Ashby', handle: 'rowan', discord: 'rowan_a', role: 'Player', gm: false,
           characters: [
@@ -127,6 +161,7 @@ window.KS = window.KS || {};
             { id: 'c3', name: 'Wick', class: 'Rogue', level: 1 },
           ],
           availability: ['mon-eve', 'tue-eve', 'thu-eve', 'thu-late', 'sat-aft', 'sat-eve', 'sat-late', 'sun-aft', 'sun-eve'],
+          exceptions: { [`${next(6)}-eve`]: false },            // away this coming Saturday evening
           watching: ['s2'], prefs: { alertOnOpenSeat: true, browserAlerts: false }, readAt: now - 3 * H };
     const mine = idx => { const c = me.characters[idx]; return { charId: c.id, uid: 'local', name: c.name, level: c.level, owner: me.name }; };
     const gmUids = players.filter(p => p.gm).map(p => p.uid).concat(asGM ? ['local'] : []);
@@ -140,7 +175,7 @@ window.KS = window.KS || {};
         party: [seat('p-wen', 0), seat('p-marek', 0), seat('p-priya', 0)] }),
       S('s2', { title: 'Farmbelt Ring — Night Watch', region: 'Farmbelt Ring Road', date: next(5), block: 'late', seats: 4, minLevel: 1, maxLevel: 3,
         notes: 'A short, local job for newer characters. Something has been taking lambs.',
-        party: asGM ? [seat('p-dunn', 0), seat('p-ola', 0), seat('p-priya', 1), seat('p-halvard', 1)] : [seat('p-dunn', 0), seat('p-ola', 0), seat('p-priya', 1), seat('p-halvard', 1)] }),
+        party: [seat('p-dunn', 0), seat('p-ola', 0), seat('p-priya', 1), seat('p-halvard', 1)] }),
       S('s3', Object.assign({ title: 'Tupperwine Ford Survey', region: 'The Tupperwine', date: next(6), block: 'aft', seats: 5, minLevel: 1, maxLevel: 4,
         notes: 'Mapping the crossings after the spring flood. Low danger, high mud.',
         party: [seat('p-wen', 1)] }, imre)),
@@ -176,6 +211,7 @@ window.KS = window.KS || {};
       D('d1', 2,  'new',      'New expedition posted: “Shadow-Prowler (NE) — The Quiet Mile” (GM Imre).', { uid: 'gm-imre', sessionId: 's8', date: s('s8').date, block: 'eve' }),
       D('d2', 5,  'open',     'Gaius (Halvard) withdrew from “The Salt Stair” — 1 seat opened.', { uid: 'p-halvard', sessionId: 's1', date: s('s1').date, block: 'eve' }),
       D('d0', 6,  'proposal', 'Ola proposed “Farmbelt Spoke (W) — the empty waystation” — Farmbelt Spoke (W). Join it from the board.', { uid: 'p-ola', sessionId: 'p2' }),
+      D('d8', 9,  'avail',    'Tess is away Saturday week — two windows blocked.', { uid: 'p-tess' }),
       D('d7', 20, 'proposal', 'Marek proposed “The Mill on the Tupperwine” — The Tupperwine, upstream of the ford. Join it from the board.', { uid: 'p-marek', sessionId: 'p1' }),
       D('d3', 26, 'full',     '“Farmbelt Ring — Night Watch” is now full.', { uid: 'p-halvard', sessionId: 's2' }),
       D('d4', 31, 'avail',    'Marek updated availability — free in 7 windows a week.', { uid: 'p-marek' }),
@@ -183,6 +219,6 @@ window.KS = window.KS || {};
       D('d6', 70, 'new',      'New expedition posted: “The Salt Stair” (GM Dahl).', { uid: dahl.gmUid, sessionId: 's1', date: s('s1').date, block: 'eve' }),
     ].filter(d => asGM ? d.id !== 'd5' : true);
 
-    return { version: 3, me, players, gmUids, sessions, dispatches };
+    return { version: 4, me, players, gmUids, sessions, dispatches };
   };
 })(window.KS);
