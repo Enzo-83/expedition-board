@@ -59,6 +59,9 @@ window.KS = window.KS || {};
     async saveProfile(p) { Object.assign(this.state.me, p); this._emit(); }
     async setAvailability(a) { this.state.me.availability = a; this._emit(); }
     async setExceptions(ex) { this.state.me.exceptions = ex; this._emit(); }
+    async setCalendarBusy(list, syncedAt) { this.state.me.gcalBusy = list || []; this.state.me.gcalSyncedAt = syncedAt || null; this._emit(); }
+    // No getCalendarToken here: the sample board has no Google session to borrow, and the
+    // UI keys off its absence to say so rather than failing at the popup.
     async setWatching(w) { this.state.me.watching = w; this._emit(); }
     async setPrefs(prefs) { this.state.me.prefs = prefs; this._emit(); }
     async markRead() { this.state.me.readAt = Date.now(); this._emit(); }

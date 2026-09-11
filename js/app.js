@@ -161,9 +161,11 @@
       html += `<tr><th scope="row" title="${esc(b.label)}"><span class="grid__block">${esc(b.short || b.label)}</span></th>`;
       for (const k of dates) {
         const past = k < today, free = R.freeOn(me, k, b.key), over = R.overridden(me, k, b.key);
+        const cal = !over && R.calendarBusy(me, k, b.key);
+        const why = over ? ` — set by hand (usually ${R.inPattern(me, k, b.key) ? 'free' : 'not free'})` : cal ? ' — your Google Calendar is busy then; click to override' : '';
         html += `<td>${past
           ? '<span class="avail__cell avail__cell--past" aria-hidden="true"></span>'
-          : `<button type="button" class="avail__cell${over ? ' avail__cell--over' : ''}" data-ex="${k}-${b.key}" aria-pressed="${free}" aria-label="${dateLabel(k)} ${b.label}${over ? ', overridden' : ''}" title="${dateLabel(k)} ${b.label}${over ? ` — overridden (usually ${R.inPattern(me, k, b.key) ? 'free' : 'not free'})` : ''}"></button>`}</td>`;
+          : `<button type="button" class="avail__cell${over ? ' avail__cell--over' : ''}${cal ? ' avail__cell--cal' : ''}" data-ex="${k}-${b.key}" aria-pressed="${free}" aria-label="${dateLabel(k)} ${b.label}${over ? ', set by hand' : cal ? ', busy in Google Calendar' : ''}" title="${dateLabel(k)} ${b.label}${why}"></button>`}</td>`;
       }
       html += '</tr>';
     }
@@ -555,13 +557,15 @@
     if (name === 'weekends') add(['sat', 'sun'].flatMap(d => BLOCKS.map(b => `${d}-${b.key}`)));
     await A.setAvailability(a); noteAvail();
   }
-  // Clicking a date cell flips that date's answer. If the new answer matches the usual week
-  // the override is dropped instead of stored, so exceptions never accumulate needlessly.
+  // Clicking a date cell flips that date's answer. If the new answer is what the layers below
+  // already say, the override is dropped rather than stored, so exceptions never accumulate —
+  // but it must compare against that resolved baseline, not the weekly pattern alone, or a
+  // date the calendar sync has blocked could never be opened again by hand.
   async function toggleException(key) {
     const dateKey = key.slice(0, 10), block = key.slice(11);
     const me = S.me, want = !R.freeOn(me, dateKey, block);
     const ex = Object.assign({}, me.exceptions || {});
-    if (want === R.inPattern(me, dateKey, block)) delete ex[key]; else ex[key] = want;
+    if (want === R.baseline(me, dateKey, block)) delete ex[key]; else ex[key] = want;
     await A.setExceptions(R.pruneExceptions(ex)); noteAvail();
   }
   function clearExceptions() {

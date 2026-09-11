@@ -375,9 +375,11 @@ dialog::backdrop { background: rgba(30, 27, 23, .55); }
 .grid th.is-today .grid__dom { color: var(--crimson); }
 .grid th.is-today .grid__dom::after { content: ""; display: block; height: 2px; background: var(--crimson); margin-top: 2px; }
 .avail__cell--past { border: 1px solid var(--hair); background: repeating-linear-gradient(45deg, transparent, transparent 3px, var(--paper-3) 3px, var(--paper-3) 4px); opacity: .5; }
-/* An overridden date carries a corner mark so the usual week stays readable underneath. */
+/* An overridden date carries a corner mark so the usual week stays readable underneath;
+   a date blocked by the calendar sync is hatched instead, so the two never look alike. */
 .avail__cell--over::before { content: ""; position: absolute; right: 2px; top: 2px; width: 5px; height: 5px; background: var(--crimson); z-index: 1; }
 .avail__cell[aria-pressed=true].avail__cell--over::before { background: var(--paper-2); }
+.avail__cell--cal { background: repeating-linear-gradient(135deg, var(--paper-2), var(--paper-2) 3px, var(--paper-3) 3px, var(--paper-3) 5px); border-color: var(--ink-3); }
 td.heat__cell--past { background: transparent; opacity: .3; }
 
 /* ---------- Google Calendar sync (GM) ---------- */

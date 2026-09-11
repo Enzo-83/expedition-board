@@ -3,18 +3,53 @@
 A drop-in scheduling board for the Kresthalis West Marches network, built the West Marches way:
 **players propose, GMs schedule.**
 
-- A **player** marks the weekly windows they can play, keeps a roster of characters, proposes an
-  expedition (title, destination, notes — their character goes on it first) and joins other
-  people's proposals or GM-posted expeditions by dragging a character onto a seat.
+- A **player** marks the weekly windows they can play — plus overrides on specific dates —
+  keeps a roster of characters, proposes an expedition (title, destination, notes — their
+  character goes on it first) and joins other people's proposals or GM-posted expeditions by
+  dragging a character onto a seat.
 - A **GM** (flagged on the allowlist, never self-declared) marks the windows they can run, posts
   dated expeditions, schedules a proposal into the window where everyone joined is free (the
   dialog is pre-filled with that date, seat count and level band), locks rosters, cancels, and
   can take anyone off a roster.
 
 A shared dispatch feed records every proposal, posting, scheduling, seating and withdrawal. The
-overlap grid shows which windows the most players are free for, dims everything outside the GMs'
-windows, and a **party picker** narrows it to a chosen set of characters — ringed cells are
-windows where all of their players are free, with one click to request an expedition there.
+overlap grid runs over real dates a week at a time, dims everything no GM can run, and a
+**party picker** narrows it to a chosen set of characters — ringed cells are dates where all of
+their players are free, with one click to request an expedition there or (for a GM) post one.
+
+## Availability
+
+Availability resolves in three layers, most specific first:
+
+1. **Date overrides** — set by hand on the *Specific dates* tab; always win. Marked with a dot.
+2. **Google Calendar busy times** — only if the GM has synced (see below); blocks, never opens.
+   Marked with a hatch.
+3. **The usual week** — the *Usual week* tab, the baseline.
+
+Clicking a date cell flips that date's answer. If the new answer is what the layers below
+already say, the override is dropped rather than stored, so overrides never pile up. Overrides
+for past dates are pruned on every write.
+
+### Google Calendar sync (GM)
+
+The *Specific dates* tab shows a **Sync from Google Calendar** button for GM accounts. It reads
+the primary calendar's `freeBusy` — busy intervals only, never event titles, which matters
+because every allowlisted account can read every player document — and blocks any window the
+usual week opens but the calendar shows as taken. Any overlap counts, however short.
+
+It is a button, not background sync: Firebase hands back a short-lived access token and does not
+refresh it, so you re-consent roughly once an hour. Results live in `gcalBusy`, separate from
+hand-set overrides, so **Sync again** replaces them wholesale and never clobbers a date you set
+deliberately; **Clear** drops them all.
+
+One-time setup in the Google Cloud project behind Firebase:
+
+1. **APIs & Services → Library** → enable **Google Calendar API**.
+2. **APIs & Services → OAuth consent screen** → add your Google account under **Test users**.
+
+Calendar is a sensitive scope, so the first sync shows a "Google hasn't verified this app"
+screen — click through it. Only accounts you add as test users can grant the scope; players
+never see any of this, since the button is GM-only.
 
 Plain HTML, CSS and JavaScript — no build step. Hosted on GitHub Pages; live data via Firebase
 (Spark / free tier). Until Firebase is configured the page runs as a local demo on sample data.
@@ -87,11 +122,12 @@ already run for Foundry — posting each new dispatch to a webhook.
 |---|---|
 | `index.html` | Layout, dialogs, script order |
 | `css/styles.css` | Editorial theme: parchment / charcoal / crimson, serif headings, system sans for data |
-| `js/data.js` | Days, windows, shared rules (`KS.rules.eligibility`), sample data |
+| `js/data.js` | Days, windows, shared rules (`KS.rules.freeOn`, `KS.rules.eligibility`), sample data |
 | `js/local-adapter.js` | `localStorage` adapter — single player, sample data |
 | `js/firebase-adapter.js` | Firestore adapter (ES module, loads the SDK from Google's CDN) — boots the app |
 | `js/firebase-config.js` | Your Firebase config, or `null` for the local demo |
 | `js/app.js` | Rendering, drag-and-drop, tap-to-place, dialogs, alerts |
+| `js/gcal.js` | Google Calendar sync (GM only) |
 | `firestore.rules` | Security rules with the e-mail allowlist |
 
 The UI only ever talks to an **adapter** with a small contract (documented at the top of
@@ -100,7 +136,7 @@ so two players racing for the last seat cannot both get it.
 
 ### Data model (Firestore)
 
-- `players/{uid}` — `name, handle, discord, role, characters[{id,name,class,level}], availability["mon-eve", …], watching[sessionId], prefs, readAt`
+- `players/{uid}` — `name, handle, discord, role, characters[{id,name,class,level}], availability["mon-eve", …], exceptions{"2026-09-17-eve": false}, gcalBusy["2026-09-17-eve", …], gcalSyncedAt, watching[sessionId], prefs, readAt`
 - `sessions/{id}` — `status (proposed|scheduled|cancelled), title, region, notes, party[{charId, uid, name, level, owner}], locked, postedAt`;
   proposals add `proposerUid, proposer`; scheduled ones add `gm, gmUid, date "YYYY-MM-DD", block, seats, minLevel, maxLevel`
 - `dispatches/{id}` — `ts, kind (proposal|new|scheduled|cancelled|lock|seat|open|full|avail|request|note), text, uid, sessionId?, date?, block?, party?[uid]`
@@ -118,7 +154,9 @@ someone; a proposer can withdraw their own proposal while it is still waiting.
 
 ### Adjusting it
 
-- Windows and their hours: `KS.BLOCKS` in `js/data.js`. Week start: `KS.DAYS`.
+- Windows and their hours: `KS.BLOCKS` in `js/data.js` (the `from`/`to` hours are what Calendar
+  sync compares busy intervals against). Week start: `KS.DAYS`. How far ahead the date views
+  run: `KS.HORIZON_WEEKS`.
 - Board name and the masthead overline: `index.html`.
 - Sample content: `KS.sample()` in `js/data.js` (local demo only; never written to Firestore).
 - Times are the viewer's local time, with the zone printed in the masthead. If the network

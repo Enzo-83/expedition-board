@@ -41,7 +41,7 @@ class FirebaseAdapter {
   }
 
   async _onAuth(user) {
-    this._stop(); this._blank(); this.user = user; this.gm = false;
+    this._stop(); this._blank(); this.user = user; this.gm = false; this._tok = null;
     if (!user) { this.onStatus({ mode: 'firebase', connected: true, user: null }); return; }
     const who = { uid: user.uid, name: user.displayName || '', email: user.email || '' };
     const fail = err => this.onStatus({ mode: 'firebase', connected: false, user: who, error: this._explain(err, who) });
@@ -116,6 +116,30 @@ class FirebaseAdapter {
   // Exceptions are replaced wholesale (they are pruned of past dates first), so a stale
   // client can never resurrect an override the player already dropped.
   async setExceptions(ex) { await this.F.updateDoc(this._me(), { exceptions: ex || {} }); }
+  async setCalendarBusy(list, syncedAt) { await this.F.updateDoc(this._me(), { gcalBusy: list || [], gcalSyncedAt: syncedAt || null }); }
+
+  // An OAuth access token for a Google API, obtained by re-consenting in a popup. Firebase
+  // never stores or refreshes these, so it is cached in memory for the hour it lives and the
+  // user re-consents after that. reauthenticateWithPopup keeps the session as it is;
+  // signInWithPopup is the fallback when re-auth is refused.
+  async getCalendarToken(scope) {
+    const F = this.F, now = Date.now();
+    if (this._tok && this._tok.scope === scope && this._tok.until > now + 60e3) return this._tok.token;
+    const p = new F.GoogleAuthProvider();
+    p.addScope(scope);
+    p.setCustomParameters({ login_hint: (this.user && this.user.email) || '', prompt: 'consent' });
+    let result;
+    try { result = await F.reauthenticateWithPopup(this.auth.currentUser, p); }
+    catch (err) {
+      if ((err && err.code || '').includes('popup-blocked')) throw new Error('Your browser blocked the Google popup — allow popups for this site and try again.');
+      if ((err && err.code || '').includes('popup-closed')) throw new Error('The Google window was closed before access was granted.');
+      result = await F.signInWithPopup(this.auth, p);
+    }
+    const cred = F.GoogleAuthProvider.credentialFromResult(result);
+    if (!cred || !cred.accessToken) throw new Error('Google did not grant calendar access. Tick the calendar permission on the consent screen and try again.');
+    this._tok = { token: cred.accessToken, scope, until: now + 55 * 60e3 };
+    return cred.accessToken;
+  }
   async setWatching(w) { await this.F.updateDoc(this._me(), { watching: w }); }
   async setPrefs(prefs) { await this.F.updateDoc(this._me(), { prefs: clean(prefs) }); }
   async markRead() { await this.F.updateDoc(this._me(), { readAt: Date.now() }); }

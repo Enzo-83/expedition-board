@@ -56,9 +56,12 @@ window.KS = window.KS || {};
   // Rules shared by the UI and by both adapters (the Firestore adapter re-runs them
   // inside a transaction against the fresh document, so two players can't take one seat).
   //
-  // Availability is a weekly pattern (`availability`: ["mon-eve", …]) plus per-date
-  // exceptions (`exceptions`: { "2026-09-17-eve": false }) that override it for one date
-  // and one block. An exception wins wherever it exists; the pattern is the baseline.
+  // Availability resolves in three layers, most specific first:
+  //   1. `exceptions`  { "2026-09-17-eve": false } — set by hand, always wins
+  //   2. `gcalBusy`    ["2026-09-17-eve", …]      — written by a Google Calendar sync, blocks only
+  //   3. `availability` ["mon-eve", …]            — the usual week, the baseline
+  // Keeping the sync results in their own field means a re-sync can replace them wholesale
+  // without touching a date the player set deliberately.
   //
   // A session is either a *proposal* (player-made: no date, no seat cap, no level band —
   // it waits for a GM) or *scheduled* (GM-made or GM-scheduled from a proposal), or
@@ -67,10 +70,13 @@ window.KS = window.KS || {};
     exKey: (dateKey, block) => `${dateKey}-${block}`,
     inPattern: (p, dateKey, block) => (p.availability || []).includes(U.weekdayOf(dateKey) + '-' + block),
     overridden: (p, dateKey, block) => !!(p.exceptions && Object.prototype.hasOwnProperty.call(p.exceptions, R.exKey(dateKey, block))),
+    calendarBusy: (p, dateKey, block) => !!(p.gcalBusy && p.gcalBusy.indexOf(R.exKey(dateKey, block)) >= 0),
+    // What the answer would be with no hand-set override — the layers under `exceptions`.
+    baseline: (p, dateKey, block) => R.calendarBusy(p, dateKey, block) ? false : R.inPattern(p, dateKey, block),
     freeOn(p, dateKey, block) {
       if (!p || !dateKey) return false;
       if (R.overridden(p, dateKey, block)) return !!p.exceptions[R.exKey(dateKey, block)];
-      return R.inPattern(p, dateKey, block);
+      return R.baseline(p, dateKey, block);
     },
     // Exceptions for dates already past are dead weight; drop them whenever we write.
     pruneExceptions(ex) {
