@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Expedition Board — Kresthalis</title>
-  <meta name="description" content="Drop-in scheduling board for the Kresthalis West Marches network: post expeditions, mark your availability, seat a character.">
+  <meta name="description" content="Drop-in scheduling board for the Kresthalis West Marches network: propose and post expeditions, mark your availability, seat a character.">
   <meta name="color-scheme" content="light">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -52,7 +52,7 @@
 <main class="layout">
 
   <div class="area-side">
-    <!-- ===== Profile + roster ===== -->
+    <!-- ===== Profile + roster (players) / Running (GM) ===== -->
     <section class="panel area-user" aria-labelledby="user-h">
       <div class="panel__head">
         <h2 id="user-h">Signed in</h2>
@@ -66,11 +66,15 @@
         </div>
         <button type="button" class="btn btn--sm btn--ghost" data-action="profile-open" title="Edit your name, handle and roster">Edit</button>
       </div>
-      <div class="panel__sub">
+      <div class="gm-note gm-only">
+        <p>You run the table. Players propose expeditions and join them; you schedule the ones you will run, post your own, and keep the rosters honest.</p>
+        <p class="gm-note__stat"><strong id="gm-proposals">0</strong><span>waiting for a GM</span></p>
+      </div>
+      <div class="panel__sub player-only">
         <span class="label">Active roster</span>
         <span class="label" id="user-chars">—</span>
       </div>
-      <div id="roster-zone" class="roster-zone">
+      <div id="roster-zone" class="roster-zone player-only">
         <ul id="roster" class="roster"></ul>
         <p class="hint">Drag a character onto an open seat — or tap the character, then tap the seat. Drag a seated character back here to withdraw.</p>
       </div>
@@ -89,7 +93,7 @@
           <button type="button" class="btn btn--sm" data-preset="weekends">+ Weekends</button>
           <button type="button" class="btn btn--sm btn--ghost" data-preset="clear">Clear</button>
         </div>
-        <p class="hint hint--flush">Recurring weekly windows, in your local time. Expeditions that land in a marked window are stamped <em>Fits you</em>, and everyone's windows feed the overlap grid.</p>
+        <p class="hint hint--flush" id="avail-hint"></p>
       </div>
     </section>
   </div>
@@ -101,14 +105,15 @@
         <p class="overline">Drop-in matchmaker</p>
         <h2 id="board-h">Upcoming expeditions</h2>
       </div>
-      <button type="button" class="btn btn--primary" data-action="post-open">Post an expedition</button>
+      <button type="button" class="btn btn--primary gm-only" data-action="post-open">Post an expedition</button>
+      <button type="button" class="btn btn--primary player-only" data-action="propose-open">Propose an expedition</button>
     </div>
 
     <div class="stats" aria-label="Board summary">
       <div class="stat"><div class="stat__n" id="stat-upcoming">0</div><div class="stat__l">Upcoming</div></div>
       <div class="stat"><div class="stat__n" id="stat-open">0</div><div class="stat__l">Open seats</div></div>
       <div class="stat"><div class="stat__n" id="stat-fit">0</div><div class="stat__l">Fit your windows</div></div>
-      <div class="stat"><div class="stat__n" id="stat-mine">0</div><div class="stat__l">Your commitments</div></div>
+      <div class="stat"><div class="stat__n" id="stat-mine">0</div><div class="stat__l" id="stat-mine-label">Your commitments</div></div>
     </div>
 
     <div class="filters" role="group" aria-label="Filter expeditions">
@@ -164,6 +169,7 @@
           <span class="heat-legend__me">▪ your window</span>
         </div>
         <p id="overlap-detail" class="overlap-detail" aria-live="polite">Hover a cell to see who is free.</p>
+        <p class="hint hint--flush" id="overlap-note"></p>
         <div class="best">
           <span class="label" id="best-label">Best windows to post</span>
           <ol id="best-windows" class="best__list"></ol>
@@ -179,13 +185,15 @@
   <span>Kresthalis Expedition Board · hosted on GitHub Pages</span>
 </footer>
 
-<!-- ===== Post an expedition ===== -->
+<!-- ===== Post / schedule an expedition (GM) ===== -->
 <dialog id="post-dialog" aria-labelledby="post-h">
   <div class="dialog__head">
     <h2 id="post-h">Post an expedition</h2>
     <span class="label">GM tools</span>
   </div>
+  <p class="dialog__note" id="post-note" hidden></p>
   <form id="post-form" class="form" novalidate>
+    <input type="hidden" name="sessionId">
     <label class="field full"><span>Title</span><input name="title" required maxlength="80" placeholder="The Salt Stair"></label>
     <label class="field full"><span>Route or region</span><input name="region" required maxlength="80" placeholder="Frost-Pelt Trail, north"></label>
     <label class="field"><span>GM</span><input name="gm" required maxlength="40"></label>
@@ -198,7 +206,27 @@
     <p class="form__error full" id="post-error" role="alert" hidden></p>
     <div class="form__actions">
       <button type="button" class="btn btn--ghost" data-action="post-close">Cancel</button>
-      <button type="submit" class="btn btn--primary">Post to the board</button>
+      <button type="submit" class="btn btn--primary" id="post-submit">Post to the board</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ===== Propose an expedition (players) ===== -->
+<dialog id="propose-dialog" aria-labelledby="propose-h">
+  <div class="dialog__head">
+    <h2 id="propose-h">Propose an expedition</h2>
+    <span class="label">Needs a GM to schedule</span>
+  </div>
+  <form id="propose-form" class="form" novalidate>
+    <label class="field full"><span>Title</span><input name="title" required maxlength="80" placeholder="The Mill on the Tupperwine"></label>
+    <label class="field full"><span>Destination or goal</span><input name="region" required maxlength="80" placeholder="Where you want to go, or what you want done"></label>
+    <label class="field full"><span>Bring</span><select name="charId" id="propose-char"></select></label>
+    <label class="field full"><span>Notes</span><textarea name="notes" rows="3" maxlength="240" placeholder="What you know, what you want, who you'd like along."></textarea></label>
+    <p class="hint hint--inline full">A proposal has no date. Other players join it from the board; a GM schedules it into the window where everyone joined is free.</p>
+    <p class="form__error full" id="propose-error" role="alert" hidden></p>
+    <div class="form__actions">
+      <button type="button" class="btn btn--ghost" data-action="propose-close">Cancel</button>
+      <button type="submit" class="btn btn--primary">Propose</button>
     </div>
   </form>
 </dialog>

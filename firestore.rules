@@ -1,25 +1,40 @@
 rules_version = '2';
 
 // Expedition Board — Firestore security rules.
-// Paste into Firebase console → Firestore Database → Rules, then Publish.
+// Deployed from the repo: `npx -y firebase-tools@latest deploy --only firestore:rules`
+// (this file is the source of truth, not the console editor).
 //
 // Access model: anyone can sign in with Google, but only accounts whose e-mail appears as a
-// document ID in the `allowlist` collection can read or write anything. The GM maintains that
-// list in the console (Firestore → allowlist → Add document, ID = the player's e-mail).
+// document ID in the `allowlist` collection can read or write anything. An allowlist entry
+// with `gm: true` marks a GM — the only accounts that can post dated expeditions, schedule a
+// proposal, lock or cancel one, or remove someone from a roster.
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
+    function email() { return request.auth.token.email; }
     function allowed() {
-      return signedIn()
-        && request.auth.token.email != null
-        && exists(/databases/$(database)/documents/allowlist/$(request.auth.token.email));
+      return signedIn() && email() != null
+        && exists(/databases/$(database)/documents/allowlist/$(email()));
+    }
+    function isGM() {
+      return allowed()
+        && get(/databases/$(database)/documents/allowlist/$(email())).data.gm == true;
+    }
+    function changesOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
 
-    // Players may check only their own allowlist entry; only the console writes here.
-    match /allowlist/{email} {
-      allow read: if signedIn() && request.auth.token.email == email;
+    // Players may check only their own allowlist entry; only the console (or the CLI) writes here.
+    match /allowlist/{e} {
+      allow read: if signedIn() && email() == e;
       allow write: if false;
+    }
+
+    // Board-wide settings (who the GMs are). Readable by the network, written by GMs.
+    match /config/{doc} {
+      allow read: if allowed();
+      allow write: if isGM();
     }
 
     // One profile per player. Everyone on the network can read profiles (the overlap grid
@@ -30,13 +45,25 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Expeditions. Anyone allowed can post one and seat/withdraw (party edits are updates);
-    // only the poster can delete it.
+    // Proposals and expeditions.
+    //  - Players create proposals (status 'proposed', themselves as proposer).
+    //  - Anyone allowed may change `party` and nothing else (seating and withdrawing).
+    //  - A proposer may edit or withdraw their own proposal while it is still proposed.
+    //  - GMs may do anything, including deleting.
     match /sessions/{id} {
       allow read: if allowed();
-      allow create: if allowed() && request.resource.data.gmUid == request.auth.uid;
-      allow update: if allowed();
-      allow delete: if allowed() && resource.data.gmUid == request.auth.uid;
+      allow create: if isGM()
+        || (allowed()
+            && request.resource.data.status == 'proposed'
+            && request.resource.data.proposerUid == request.auth.uid);
+      allow update: if isGM()
+        || (allowed() && changesOnly(['party']))
+        || (allowed()
+            && resource.data.status == 'proposed'
+            && resource.data.proposerUid == request.auth.uid
+            && request.resource.data.status in ['proposed', 'cancelled']
+            && changesOnly(['status', 'title', 'region', 'notes', 'party']));
+      allow delete: if isGM();
     }
 
     // Every dispatch is signed by its author. Authors may refresh their own entry (used to keep

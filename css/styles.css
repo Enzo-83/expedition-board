@@ -345,6 +345,28 @@ dialog::backdrop { background: rgba(30, 27, 23, .55); }
 .toast--no { border-left-color: var(--paper-3); }
 .toast--hint { border-left-color: var(--ink-3); }
 
+/* ---------- roles: GM vs player ---------- */
+body:not(.is-gm) .gm-only, body.is-gm .player-only { display: none !important; }
+.gm-note { padding: 12px var(--pad) 14px; font-size: 13px; color: var(--ink-2); }
+.gm-note__stat { margin-top: 10px; display: flex; align-items: baseline; gap: 8px; color: var(--ink-3); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.gm-note__stat strong { font-family: var(--serif); font-size: 26px; color: var(--crimson); line-height: 1; letter-spacing: 0; }
+.session--proposal .session__block { color: var(--crimson); }
+.session__prefer { font-size: 12.5px; color: var(--ink-2); margin-top: 6px; }
+.session__prefer strong { color: var(--crimson); }
+.session__gm { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.session__actions { flex-direction: column; align-items: flex-end; gap: 8px; }
+.stamp--gm { color: var(--crimson); }
+.seat--other { cursor: pointer; }
+.seat--other:hover::after { content: "×"; position: absolute; inset: 0; display: grid; place-items: center; background: var(--ink-2); font-size: 17px; }
+.seat--other { position: relative; }
+td.heat__cell--out { opacity: .3; }
+.dialog__note { padding: 12px 18px 0; font-size: 12.5px; color: var(--ink-2); }
+.dialog__note strong { color: var(--crimson); }
+.day--proposals { border-bottom-color: var(--crimson); }
+.day--proposals .day__date { color: var(--ink-3); }
+.disp--proposal .disp__kind, .disp--scheduled .disp__kind { color: var(--crimson); }
+@media (max-width: 560px) { .session__actions { align-items: flex-start; } .session__gm { justify-content: flex-start; } }
+
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 @media (max-width: 600px) {
   :root { --gutter: 14px; }

@@ -1,12 +1,14 @@
 /* Expedition Board — Firestore adapter (ES module).
    This module is the boot point: with a config in js/firebase-config.js it boots the app on
-   Firebase (Google sign-in + Firestore, live for everyone); without one it boots the local demo.
-   Same contract as local-adapter.js — the UI cannot tell them apart.
+   Firebase (Google sign-in + Firestore, live for everyone); without one — or with ?demo in the
+   URL — it boots the local sample adapter. Same contract as local-adapter.js.
 
    Collections:  players/{uid}      one doc per signed-in player (profile, roster, availability, watching, prefs, readAt)
-                 sessions/{id}      one doc per expedition; party = [{charId, uid, name, level, owner}]
+                 sessions/{id}      proposals and expeditions; status proposed | scheduled | cancelled;
+                                    party = [{charId, uid, name, level, owner}]
                  dispatches/{id}    network-wide event feed, newest first by ts
-                 allowlist/{email}  who may sign in — see firestore.rules */
+                 allowlist/{email}  who may sign in; gm: true marks a GM — see firestore.rules
+                 config/board       gmUids[] and gmNames{} — written by GMs on sign-in so every client knows who runs */
 const KS = window.KS;
 
 // Firestore rejects undefined field values; strip them before writing.
@@ -22,13 +24,13 @@ class FirebaseAdapter {
     this.app = F.initializeApp(cfg);
     this.auth = F.getAuth(this.app);
     this.db = F.getFirestore(this.app);
-    this.user = null;
+    this.user = null; this.gm = false;
     this.unsubs = [];
     this._blank();
   }
   _blank() {
-    this.state = { me: null, players: [], sessions: [], dispatches: [] };
-    this.ready = { players: false, sessions: false, dispatches: false };
+    this.state = { me: null, players: [], gmUids: [], sessions: [], dispatches: [] };
+    this.ready = { players: false, sessions: false, dispatches: false, config: false };
   }
 
   start({ onState, onStatus }) {
@@ -39,7 +41,7 @@ class FirebaseAdapter {
   }
 
   async _onAuth(user) {
-    this._stop(); this._blank(); this.user = user;
+    this._stop(); this._blank(); this.user = user; this.gm = false;
     if (!user) { this.onStatus({ mode: 'firebase', connected: true, user: null }); return; }
     const who = { uid: user.uid, name: user.displayName || '', email: user.email || '' };
     const fail = err => this.onStatus({ mode: 'firebase', connected: false, user: who, error: this._explain(err, who) });
@@ -56,12 +58,19 @@ class FirebaseAdapter {
           readAt: Date.now(), createdAt: Date.now(),
         });
       }
+      // GM status lives on the allowlist entry (set by the project owner), never on the profile.
+      const al = await F.getDoc(F.doc(this.db, 'allowlist', user.email || '-'));
+      this.gm = !!(al.exists() && al.data().gm === true);
+      if (this.gm) {
+        await F.setDoc(F.doc(this.db, 'config', 'board'),
+          { gmUids: F.arrayUnion(user.uid), gmNames: { [user.uid]: user.displayName || 'GM' } }, { merge: true });
+      }
     } catch (err) { fail(err); return; }
 
     this.unsubs.push(F.onSnapshot(F.collection(this.db, 'players'), qs => {
       this.state.players = qs.docs.map(d => Object.assign({ uid: d.id }, d.data()));
       const me = this.state.players.find(p => p.uid === user.uid);
-      if (me) this.state.me = me;
+      if (me) this.state.me = Object.assign({}, me, { gm: this.gm });
       this.ready.players = true; this._emit();
     }, fail));
     this.unsubs.push(F.onSnapshot(F.collection(this.db, 'sessions'), qs => {
@@ -72,15 +81,22 @@ class FirebaseAdapter {
       this.state.dispatches = qs.docs.map(d => Object.assign({ id: d.id }, d.data()));
       this.ready.dispatches = true; this._emit();
     }, fail));
+    this.unsubs.push(F.onSnapshot(F.doc(this.db, 'config', 'board'), d => {
+      this.state.gmUids = (d.exists() && d.data().gmUids) || [];
+      this.ready.config = true; this._emit();
+    }, fail));
     this.onStatus({ mode: 'firebase', connected: true, user: who, firstRun });
   }
 
-  // Render only once all three collections have arrived, so the first paint is whole.
+  // Render only once every subscription has arrived, so the first paint is whole.
   _emit() {
-    if (this.state.me && this.ready.players && this.ready.sessions && this.ready.dispatches) this.onState(this.state);
+    const r = this.ready;
+    if (this.state.me && r.players && r.sessions && r.dispatches && r.config) this.onState(this.state);
   }
   _stop() { this.unsubs.forEach(u => { try { u(); } catch (e) { /* ignore */ } }); this.unsubs = []; }
   _me() { return this.F.doc(this.db, 'players', this.user.uid); }
+  _sess(id) { return this.F.doc(this.db, 'sessions', id); }
+  _entryFor(ch) { return { charId: ch.id, uid: this.user.uid, name: ch.name, level: ch.level, owner: this.state.me.name }; }
   _explain(err, who) {
     const code = (err && err.code) || '';
     if (code.includes('permission-denied')) return `Signed in as ${who.email || who.name}, but that account isn't on the network's list yet. Ask the GM to add it, then reload.`;
@@ -103,25 +119,47 @@ class FirebaseAdapter {
 
   async postSession(s) {
     const ref = await this.F.addDoc(this.F.collection(this.db, 'sessions'),
-      clean(Object.assign({}, s, { party: [], locked: false, gmUid: this.user.uid, postedAt: Date.now() })));
+      clean(Object.assign({}, s, { status: 'scheduled', party: [], locked: false, gmUid: this.user.uid, postedAt: Date.now() })));
     return ref.id;
+  }
+  async propose(p) {
+    const me = this.state.me;
+    const ref = await this.F.addDoc(this.F.collection(this.db, 'sessions'), clean({
+      status: 'proposed', title: p.title, region: p.region, notes: p.notes || '',
+      proposerUid: this.user.uid, proposer: me.name, party: [this._entryFor(p.character)], locked: false,
+      gm: null, gmUid: null, date: null, block: null, seats: null, minLevel: null, maxLevel: null, postedAt: Date.now(),
+    }));
+    return ref.id;
+  }
+  async schedule(id, f) {
+    await this.F.updateDoc(this._sess(id), clean(Object.assign({}, f, { status: 'scheduled', gmUid: this.user.uid, gm: f.gm || this.state.me.name, scheduledAt: Date.now() })));
+  }
+  async setStatus(id, status) { await this.F.updateDoc(this._sess(id), { status }); }
+  async setLocked(id, locked) { await this.F.updateDoc(this._sess(id), { locked: !!locked }); }
+  async gmUnseat(id, charId, uid) {
+    const F = this.F, ref = this._sess(id);
+    await F.runTransaction(this.db, async tx => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error('That expedition is no longer on the board.');
+      tx.update(ref, { party: (snap.data().party || []).filter(e => !(e.charId === charId && e.uid === uid)) });
+    });
   }
 
   // Seat changes run as transactions against the fresh document: if two players race for
   // the last seat, the second transaction re-reads, finds no seat, and is refused cleanly.
   async seat(sessId, ch) {
-    const F = this.F, ref = F.doc(this.db, 'sessions', sessId), me = this.state.me;
+    const F = this.F, ref = this._sess(sessId);
     await F.runTransaction(this.db, async tx => {
       const snap = await tx.get(ref);
       if (!snap.exists()) throw new Error('That expedition is no longer on the board.');
       const s = Object.assign({ id: snap.id }, snap.data());
       const v = KS.rules.eligibility(this.state, s, ch);
       if (!v.ok) throw new Error(v.reason);
-      tx.update(ref, { party: [...(s.party || []), { charId: ch.id, uid: this.user.uid, name: ch.name, level: ch.level, owner: me.name }] });
+      tx.update(ref, { party: [...(s.party || []), this._entryFor(ch)] });
     });
   }
   async unseat(sessId, charId) {
-    const F = this.F, ref = F.doc(this.db, 'sessions', sessId), uid = this.user.uid;
+    const F = this.F, ref = this._sess(sessId), uid = this.user.uid;
     await F.runTransaction(this.db, async tx => {
       const snap = await tx.get(ref);
       if (!snap.exists()) throw new Error('That expedition is no longer on the board.');
@@ -130,7 +168,7 @@ class FirebaseAdapter {
   }
   async move(fromId, toId, charId) {
     const F = this.F, uid = this.user.uid, me = this.state.me;
-    const fromRef = F.doc(this.db, 'sessions', fromId), toRef = F.doc(this.db, 'sessions', toId);
+    const fromRef = this._sess(fromId), toRef = this._sess(toId);
     await F.runTransaction(this.db, async tx => {
       const [a, b] = await Promise.all([tx.get(fromRef), tx.get(toRef)]);
       if (!a.exists() || !b.exists()) throw new Error('One of those expeditions is no longer on the board.');
@@ -141,7 +179,7 @@ class FirebaseAdapter {
       const v = KS.rules.eligibility(this.state, to, ch, { ignoreSessId: fromId });
       if (!v.ok) throw new Error(v.reason);
       tx.update(fromRef, { party: from.party.filter(e => e !== entry) });
-      tx.update(toRef, { party: [...(to.party || []), { charId: ch.id, uid, name: ch.name, level: ch.level, owner: me.name }] });
+      tx.update(toRef, { party: [...(to.party || []), this._entryFor(ch)] });
     });
   }
 
@@ -156,11 +194,12 @@ class FirebaseAdapter {
 
 // ---- boot (kept after the class: a class is not usable before its declaration runs) ----
 const cfg = window.KS_FIREBASE_CONFIG;
-const demo = new URLSearchParams(location.search).has('demo');   // ?demo — sample data, nothing shared
+const params = new URLSearchParams(location.search);
+const demo = params.has('demo');                       // ?demo — sample data, nothing shared; ?demo=gm — as the GM
 if (KS.booted) {
   // app.js already booted the local demo (file:// or the fallback button).
 } else if (demo || !cfg || !cfg.apiKey || !cfg.projectId) {
-  KS.boot(new KS.LocalAdapter());
+  KS.boot(new KS.LocalAdapter({ gm: params.get('demo') === 'gm' }));
 } else {
   const V = '12.4.0';
   const [app, auth, fs] = await Promise.all([

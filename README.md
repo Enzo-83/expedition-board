@@ -1,12 +1,20 @@
 # Expedition Board
 
-A drop-in scheduling board for the Kresthalis West Marches network. Players mark the weekly
-windows they can play, GMs post expeditions, and anyone drags one of their characters onto an
-open seat. A shared dispatch feed records every posting, seating and withdrawal; an overlap grid
-shows the GM which windows the most players are free for, and a **party picker** narrows it to
-a chosen set of characters — ringed cells are windows where all of their players are free, with
-one click to request an expedition there (a dispatch every GM sees) or to post one pre-filled
-with that date, window and level band.
+A drop-in scheduling board for the Kresthalis West Marches network, built the West Marches way:
+**players propose, GMs schedule.**
+
+- A **player** marks the weekly windows they can play, keeps a roster of characters, proposes an
+  expedition (title, destination, notes — their character goes on it first) and joins other
+  people's proposals or GM-posted expeditions by dragging a character onto a seat.
+- A **GM** (flagged on the allowlist, never self-declared) marks the windows they can run, posts
+  dated expeditions, schedules a proposal into the window where everyone joined is free (the
+  dialog is pre-filled with that date, seat count and level band), locks rosters, cancels, and
+  can take anyone off a roster.
+
+A shared dispatch feed records every proposal, posting, scheduling, seating and withdrawal. The
+overlap grid shows which windows the most players are free for, dims everything outside the GMs'
+windows, and a **party picker** narrows it to a chosen set of characters — ringed cells are
+windows where all of their players are free, with one click to request an expedition there.
 
 Plain HTML, CSS and JavaScript — no build step. Hosted on GitHub Pages; live data via Firebase
 (Spark / free tier). Until Firebase is configured the page runs as a local demo on sample data.
@@ -31,7 +39,7 @@ ten more; Ctrl+Shift+R forces a refresh). `.nojekyll` is included so Pages serve
 
 Add `?demo` to the URL — <https://enzo-83.github.io/expedition-board/?demo> — to open the board
 on sample data in the local mode, with no sign-in and nothing shared: handy for showing a new
-player the flow without touching real seats.
+player the flow without touching real seats. `?demo=gm` does the same from the GM's side.
 
 ## Going live with Firebase
 
@@ -49,7 +57,8 @@ couple of dozen players will not get near them.
 5. Firestore → **Rules** → replace the contents with `firestore.rules` from this folder → Publish.
 6. Firestore → **Data** → Start collection `allowlist`. For each player, add a document whose
    **Document ID is their Google e-mail address** (the fields can be empty, or `{ name: "…" }` for
-   your own reference). Include yourself.
+   your own reference). Include yourself, and give every GM's entry a boolean field **`gm: true`**
+   — that flag is what unlocks the GM view and the GM-only writes in the rules.
 7. Push `js/firebase-config.js` and reload the site. The masthead shows **Live** once you are
    signed in; a first sign-in opens the profile dialog to name yourself and add characters.
 
@@ -92,15 +101,20 @@ so two players racing for the last seat cannot both get it.
 ### Data model (Firestore)
 
 - `players/{uid}` — `name, handle, discord, role, characters[{id,name,class,level}], availability["mon-eve", …], watching[sessionId], prefs, readAt`
-- `sessions/{id}` — `title, region, gm, gmUid, date "YYYY-MM-DD", block, seats, minLevel, maxLevel, notes, party[{charId, uid, name, level, owner}], locked, postedAt`
-- `dispatches/{id}` — `ts, kind (new|seat|open|full|avail|request), text, uid, sessionId?, date?, block?, party?[uid]`
-- `allowlist/{email}` — presence is what matters
+- `sessions/{id}` — `status (proposed|scheduled|cancelled), title, region, notes, party[{charId, uid, name, level, owner}], locked, postedAt`;
+  proposals add `proposerUid, proposer`; scheduled ones add `gm, gmUid, date "YYYY-MM-DD", block, seats, minLevel, maxLevel`
+- `dispatches/{id}` — `ts, kind (proposal|new|scheduled|cancelled|lock|seat|open|full|avail|request|note), text, uid, sessionId?, date?, block?, party?[uid]`
+- `allowlist/{email}` — presence admits the account; `gm: true` makes it a GM
+- `config/board` — `gmUids[]`, written by GMs on sign-in so every client can dim the grid outside their windows
 
 ### Rules the board enforces
 
-A character can be seated only if the expedition is upcoming and unlocked, has an open seat,
-takes the character's level, and the *player* is not already committed to another expedition in
-the same date and window. Refusals show the reason and shake the row.
+A proposal has no date, seat cap or level band — any player can join it with one character. A
+character can be seated on a scheduled expedition only if it is upcoming and unlocked, has an
+open seat, takes the character's level, and the *player* is not already committed to another
+expedition in the same date and window. One seat per player per expedition. Refusals show the
+reason and shake the row. Only GMs can post dated expeditions, schedule, lock, cancel, or remove
+someone; a proposer can withdraw their own proposal while it is still waiting.
 
 ### Adjusting it
 

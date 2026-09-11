@@ -1,6 +1,9 @@
 /* Expedition Board — UI.
    Talks to the world only through an adapter (local-adapter.js / firebase-adapter.js).
-   State arrives via onState and is treated as read-only here; every change is an adapter call. */
+   State arrives via onState and is treated as read-only here; every change is an adapter call.
+
+   Roles: a player has a roster, proposes expeditions and joins them; a GM (flagged on the
+   allowlist) has no roster, posts dated expeditions, schedules proposals, locks and cancels. */
 (function () {
   'use strict';
   const U = KS.util, R = KS.rules, DAYS = KS.DAYS, BLOCKS = KS.BLOCKS, esc = U.esc;
@@ -14,16 +17,21 @@
   let dragging = null;           // { kind: 'char' | 'chip', charId, sessId }
   let seenDispatches = null;     // ids already seen — new ones may raise a browser alert
   let availTimer = null, toastTimer = null, profileOpenedOnce = false, resetArmedAt = 0;
+  let pendingConfirm = null;     // { key, at } — two-click confirmation for destructive actions
   const ui = { filter: 'all', party: new Set() };   // party: "uid:charId" keys picked in the overlap panel
 
-  const KIND = { new: 'Posted', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', request: 'Request', note: 'Note' };
+  const KIND = { new: 'Posted', proposal: 'Proposed', scheduled: 'Scheduled', cancelled: 'Cancelled', lock: 'Roster', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', request: 'Request', note: 'Note' };
   const fmtDay  = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
   const fmtDate = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
   const fmtLong = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   const when = s => `${fmtLong.format(U.parseKey(s.date))}, ${U.blockOf(s.block).label}`;
   const byId = id => (S && S.sessions.find(s => s.id === id)) || null;
   const myChar = id => (S && S.me.characters.find(c => c.id === id)) || null;
-  const upcoming = () => U.sortSessions(S.sessions.filter(s => !R.isPast(s)));
+  const isGM = () => !!(S && S.me && S.me.gm);
+  const gmUids = () => (S && S.gmUids) || [];
+  const live = () => S.sessions.filter(R.isLive);
+  const upcoming = () => U.sortSessions(live().filter(s => !R.isProposal(s) && !R.isPast(s)));
+  const proposals = () => live().filter(R.isProposal).sort((a, b) => (b.postedAt || 0) - (a.postedAt || 0));
   const isWatching = id => (S.me.watching || []).includes(id);
   const isMine = e => e.uid === S.me.uid;
 
@@ -40,12 +48,13 @@
     });
   };
   // Module scripts can't load from file://, so a double-clicked index.html runs the local demo.
-  if (location.protocol === 'file:') KS.boot(new KS.LocalAdapter());
+  if (location.protocol === 'file:') KS.boot(new KS.LocalAdapter({}));
   setTimeout(() => { if (!KS.booted) $('#boot-error').hidden = false; }, 8000);
 
   // ---------------------------------------------------------------- render
   function render() {
     if (!S) return;
+    document.body.classList.toggle('is-gm', isGM());
     const a = document.activeElement, d = a && a.dataset;
     const keep = d ? (d.slot ? `[data-slot="${d.slot}"]` : d.filter ? `[data-filter="${d.filter}"]` : d.watch ? `[data-watch="${d.watch}"]` : d.char ? `[data-char="${d.char}"]` : null) : null;
     renderUser(); renderRoster(); renderAvailability(); renderBoard(); renderDispatches(); renderOverlap(); renderMeta(); renderArm();
@@ -73,12 +82,18 @@
   }
 
   function renderUser() {
-    const me = S.me, n = me.characters.length;
+    const me = S.me, n = me.characters.length, gm = isGM();
+    $('#user-h').textContent = gm ? 'Running the table' : 'Signed in';
+    $('#user-role').textContent = gm ? 'GM' : 'Player';
     $('#user-initials').textContent = U.initials(me.name);
     $('#user-name').textContent = me.name || '—';
     $('#user-sub').textContent = [me.handle ? '@' + me.handle : '', me.discord].filter(Boolean).join(' · ');
-    $('#user-role').textContent = me.role || 'Player';
     $('#user-chars').textContent = `${n} character${n === 1 ? '' : 's'}`;
+    $('#gm-proposals').textContent = proposals().length;
+    $('#avail-h').textContent = gm ? 'When I can run' : 'My availability';
+    $('#avail-hint').textContent = gm
+      ? 'Mark the windows you can run. The overlap grid dims everything else, and proposals are scheduled against these.'
+      : 'Recurring weekly windows, in your local time. Expeditions that land in a marked window are stamped “Fits you”, and everyone’s windows feed the overlap grid.';
   }
 
   function renderRoster() {
@@ -111,63 +126,109 @@
   }
 
   function renderBoard() {
-    const list = upcoming();
+    const list = upcoming(), props = proposals(), gm = isGM();
     const shown = list.filter(s => ui.filter === 'fit' ? R.fits(S.me, s) : ui.filter === 'open' ? R.openSeats(s) > 0 : true);
     $('#stat-upcoming').textContent = list.length;
     $('#stat-open').textContent = list.reduce((n, s) => n + R.openSeats(s), 0);
     $('#stat-fit').textContent = list.filter(s => R.fits(S.me, s)).length;
-    $('#stat-mine').textContent = list.filter(s => R.myEntry(S.me, s)).length;
+    $('#stat-mine').textContent = gm ? list.filter(s => s.gmUid === S.me.uid).length : list.filter(s => R.myEntry(S.me, s)).length;
+    $('#stat-mine-label').textContent = gm ? 'You’re running' : 'Your commitments';
     $$('.filters button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.filter === ui.filter)));
     $('#board-count').textContent = `${shown.length} of ${list.length}`;
-    if (!shown.length) { $('#board-list').innerHTML = emptyState(list.length); return; }
-    let html = '', lastDate = null;
-    for (const s of shown) {
-      if (s.date !== lastDate) {
-        lastDate = s.date;
-        const d = U.parseKey(s.date), n = shown.filter(x => x.date === s.date).length;
-        html += `<h3 class="day"><span class="day__name">${esc(fmtDay.format(d))}</span><span class="day__date">${esc(fmtDate.format(d))}</span><span class="day__count">${n} expedition${n === 1 ? '' : 's'}</span></h3>`;
+    let html = '';
+    if (props.length) {
+      html += `<h3 class="day day--proposals"><span class="day__name">Proposed</span><span class="day__date">${gm ? 'waiting for you' : 'waiting for a GM'}</span><span class="day__count">${props.length} proposal${props.length === 1 ? '' : 's'}</span></h3>`
+        + props.map(sessionHTML).join('');
+    }
+    if (!shown.length) html += emptyState(list.length, props.length);
+    else {
+      let lastDate = null;
+      for (const s of shown) {
+        if (s.date !== lastDate) {
+          lastDate = s.date;
+          const d = U.parseKey(s.date), n = shown.filter(x => x.date === s.date).length;
+          html += `<h3 class="day"><span class="day__name">${esc(fmtDay.format(d))}</span><span class="day__date">${esc(fmtDate.format(d))}</span><span class="day__count">${n} expedition${n === 1 ? '' : 's'}</span></h3>`;
+        }
+        html += sessionHTML(s);
       }
-      html += sessionHTML(s);
     }
     $('#board-list').innerHTML = html;
   }
 
   function sessionHTML(s) {
-    const b = U.blockOf(s.block), open = R.openSeats(s), mine = R.myEntry(S.me, s), fit = R.fits(S.me, s);
-    const party = s.party || [], seats = [];
-    for (let i = 0; i < s.seats; i++) {
-      const e = party[i];
-      if (!e) seats.push(`<button type="button" class="seat seat--open" data-open="${esc(s.id)}" aria-label="Open seat on ${esc(s.title)} — place a character">+</button>`);
-      else if (isMine(e)) seats.push(`<button type="button" class="seat seat--mine" draggable="true" data-chip="${esc(e.charId)}" data-sess="${esc(s.id)}" title="${esc(e.name)} · Lvl ${esc(e.level)} · you — click to withdraw" aria-label="Withdraw ${esc(e.name)} from ${esc(s.title)}">${esc(U.initials(e.name))}</button>`);
-      else seats.push(`<span class="seat seat--filled" tabindex="0" title="${esc(e.name)} · Lvl ${esc(e.level)} · ${esc(e.owner || '')}">${esc(U.initials(e.name))}</span>`);
-    }
+    const prop = R.isProposal(s), gm = isGM(), party = s.party || [];
+    const b = prop ? null : U.blockOf(s.block), open = R.openSeats(s), mine = R.myEntry(S.me, s), fit = R.fits(S.me, s);
+    const isProposer = prop && s.proposerUid === S.me.uid;
+    const seatOf = e => isMine(e)
+      ? `<button type="button" class="seat seat--mine" draggable="true" data-chip="${esc(e.charId)}" data-sess="${esc(s.id)}" title="${esc(e.name)} · Lvl ${esc(e.level)} · you — click to withdraw" aria-label="Withdraw ${esc(e.name)} from ${esc(s.title)}">${esc(U.initials(e.name))}</button>`
+      : gm
+        ? `<button type="button" class="seat seat--filled seat--other" data-gmremove="${esc(e.charId)}" data-gmuid="${esc(e.uid)}" data-sess="${esc(s.id)}" title="${esc(e.name)} · Lvl ${esc(e.level)} · ${esc(e.owner || '')} — click to take off the roster" aria-label="Remove ${esc(e.name)} from ${esc(s.title)}">${esc(U.initials(e.name))}</button>`
+        : `<span class="seat seat--filled" tabindex="0" title="${esc(e.name)} · Lvl ${esc(e.level)} · ${esc(e.owner || '')}">${esc(U.initials(e.name))}</span>`;
+    const openSeat = `<button type="button" class="seat seat--open" data-open="${esc(s.id)}" aria-label="Open seat on ${esc(s.title)} — place a character">+</button>`;
+    const seats = party.map(seatOf);
+    if (prop) { if (!gm && !mine) seats.push(openSeat); }
+    else for (let i = party.length; i < s.seats; i++) seats.push(openSeat);
+
     const names = party.map(e => `<span class="${isMine(e) ? 'party__me' : ''}">${esc(e.name)} <small>${esc(e.level)}</small></span>`).join('<span class="party__sep">·</span>');
     const stamps = [];
-    if (mine) stamps.push('<li class="stamp stamp--in">You’re in</li>'); else if (fit) stamps.push('<li class="stamp stamp--fit">Fits you</li>');
-    if (open === 0) stamps.push('<li class="stamp stamp--full">Full</li>');
-    if (s.locked) stamps.push('<li class="stamp stamp--full">Locked</li>');
-    return `<article class="session${mine ? ' session--mine' : ''}${open === 0 ? ' session--full' : ''}" data-id="${esc(s.id)}">
-      <div class="session__when"><span class="session__block">${esc(b.label)}</span><span class="session__time">${esc(b.time)}</span></div>
+    if (prop) {
+      stamps.push(isProposer ? '<li class="stamp stamp--in">Your proposal</li>' : '<li class="stamp stamp--gm">Needs a GM</li>');
+      if (mine && !isProposer) stamps.push('<li class="stamp stamp--in">You’re in</li>');
+    } else {
+      if (mine) stamps.push('<li class="stamp stamp--in">You’re in</li>'); else if (fit) stamps.push('<li class="stamp stamp--fit">Fits you</li>');
+      if (open === 0) stamps.push('<li class="stamp stamp--full">Full</li>');
+      if (s.locked) stamps.push('<li class="stamp stamp--full">Locked</li>');
+      if (gm && s.gmUid === S.me.uid) stamps.push('<li class="stamp stamp--gm">You run this</li>');
+    }
+    let prefer = '';
+    if (prop) {
+      const wins = bestWindows(party.map(e => e.uid), 2), gmw = gmWindows().length > 0;
+      prefer = `<p class="session__prefer">${wins.length
+        ? `Everyone joined can make <strong>${wins.map(w => esc(slotLabel(w))).join('</strong> or <strong>')}</strong>`
+        : 'No window yet where everyone joined is free'}${gmw ? ' <small>(within GM windows)</small>' : ''}.</p>`;
+    }
+    const whenCol = prop
+      ? `<span class="session__block">Proposed</span><span class="session__time">${esc(relTime(s.postedAt || 0))}</span>`
+      : `<span class="session__block">${esc(b.label)}</span><span class="session__time">${esc(b.time)}</span>`;
+    const meta = prop
+      ? `${esc(s.region)}<span class="sep">·</span>proposed by ${esc(s.proposer || '')}`
+      : `${esc(s.region)}<span class="sep">·</span>GM ${esc(s.gm)}<span class="sep">·</span>${esc(s.seats)} seats`;
+    const band = prop
+      ? `<span class="label">Levels</span><strong title="Set when a GM schedules it">—</strong>`
+      : `<span class="label">Levels</span><strong>${esc(s.minLevel)}–${esc(s.maxLevel)}</strong>`;
+    const count = prop ? `${party.length} joined` : `${party.length} of ${esc(s.seats)} seated${open ? ` · <strong>${open} open</strong>` : ''}`;
+    const acts = [`<button type="button" class="watch" data-watch="${esc(s.id)}" aria-pressed="${isWatching(s.id)}" title="${prop ? 'Get a dispatch when this is scheduled' : 'Get a dispatch when a seat opens here'}">${isWatching(s.id) ? 'Watching' : 'Watch'}</button>`];
+    if (gm) acts.push(prop
+      ? `<div class="session__gm"><button type="button" class="btn btn--sm btn--primary" data-action="schedule-open" data-sess="${esc(s.id)}">Schedule</button><button type="button" class="btn btn--sm btn--ghost" data-action="decline" data-sess="${esc(s.id)}">Decline</button></div>`
+      : `<div class="session__gm"><button type="button" class="btn btn--sm" data-action="toggle-lock" data-sess="${esc(s.id)}">${s.locked ? 'Unlock' : 'Lock roster'}</button><button type="button" class="btn btn--sm btn--ghost" data-action="cancel" data-sess="${esc(s.id)}">Cancel</button></div>`);
+    else if (isProposer) acts.push(`<div class="session__gm"><button type="button" class="btn btn--sm btn--ghost" data-action="withdraw-proposal" data-sess="${esc(s.id)}">Withdraw</button></div>`);
+
+    return `<article class="session${prop ? ' session--proposal' : ''}${mine ? ' session--mine' : ''}${open === 0 ? ' session--full' : ''}" data-id="${esc(s.id)}">
+      <div class="session__when">${whenCol}</div>
       <div class="session__body">
         <h4 class="session__title">${esc(s.title)}</h4>
-        <p class="session__meta">${esc(s.region)}<span class="sep">·</span>GM ${esc(s.gm)}<span class="sep">·</span>${esc(s.seats)} seats</p>
+        <p class="session__meta">${meta}</p>
         ${s.notes ? `<p class="session__notes">${esc(s.notes)}</p>` : ''}
         ${names ? `<p class="party">${names}</p>` : ''}
+        ${prefer}
         ${stamps.length ? `<ul class="stamps">${stamps.join('')}</ul>` : ''}
       </div>
-      <div class="session__band"><span class="label">Levels</span><strong>${esc(s.minLevel)}–${esc(s.maxLevel)}</strong></div>
+      <div class="session__band">${band}</div>
       <div class="session__seats">
         <div class="seats" data-drop="${esc(s.id)}" role="group" aria-label="Seats on ${esc(s.title)}">${seats.join('')}</div>
-        <p class="seats__count">${party.length} of ${esc(s.seats)} seated${open ? ` · <strong>${open} open</strong>` : ''}</p>
+        <p class="seats__count">${count}</p>
       </div>
-      <div class="session__actions">
-        <button type="button" class="watch" data-watch="${esc(s.id)}" aria-pressed="${isWatching(s.id)}" title="Get a dispatch when a seat opens here">${isWatching(s.id) ? 'Watching' : 'Watch'}</button>
-      </div>
+      <div class="session__actions">${acts.join('')}</div>
     </article>`;
   }
 
-  function emptyState(total) {
-    if (!total) return `<div class="empty"><h4>Nothing on the board</h4><p>No upcoming expeditions. ${status.mode === 'local' ? 'The sample dates may have passed — <button type="button" class="linklike" data-action="reset">reset the sample data</button>, or ' : ''}post one.</p></div>`;
+  function emptyState(total, propsN) {
+    if (!total) {
+      const lead = isGM()
+        ? (propsN ? 'Schedule a proposal above, or post an expedition of your own.' : 'Post an expedition, or wait for a proposal to come in.')
+        : (propsN ? 'No dated expeditions yet — join a proposal above, or propose your own.' : 'No expeditions yet. Propose one and the GM will schedule it.');
+      return `<div class="empty"><h4>${propsN ? 'Nothing scheduled yet' : 'Nothing on the board'}</h4><p>${lead}${status.mode === 'local' ? ' The sample dates may have passed — <button type="button" class="linklike" data-action="reset">reset the sample data</button>.' : ''}</p></div>`;
+    }
     return `<div class="empty"><h4>Nothing fits those filters</h4><p>Try widening your availability, or show all expeditions.</p></div>`;
   }
 
@@ -196,14 +257,32 @@
   }
 
   // ---- overlap + party picker ----------------------------------------------
-  // With nothing picked the heatmap shows the whole network. Pick characters and it narrows
-  // to their players: ringed cells are windows where every one of them is free.
+  // With nothing picked the heatmap shows every player. Pick characters and it narrows to
+  // their players: ringed cells are windows where every one of them is free. Cells outside
+  // the GMs' windows are dimmed in every view — nothing can be scheduled there.
   const partyKey = (uid, charId) => `${uid}:${charId || ''}`;
   function peopleList() {
     return [
-      { uid: S.me.uid, name: S.me.name, availability: S.me.availability || [], characters: S.me.characters || [], me: true },
-      ...S.players.filter(p => p.uid !== S.me.uid).map(p => ({ uid: p.uid, name: p.name || 'Unnamed', availability: p.availability || [], characters: p.characters || [], me: false })),
+      { uid: S.me.uid, name: S.me.name, availability: S.me.availability || [], characters: S.me.characters || [], gm: !!S.me.gm, me: true },
+      ...S.players.filter(p => p.uid !== S.me.uid).map(p => ({ uid: p.uid, name: p.name || 'Unnamed', availability: p.availability || [], characters: p.characters || [], gm: !!p.gm, me: false })),
     ];
+  }
+  const isGMuid = p => p.gm || gmUids().includes(p.uid);
+  const playersOnly = () => peopleList().filter(p => !isGMuid(p));
+  function gmWindows() {
+    const set = new Set();
+    peopleList().forEach(p => { if (isGMuid(p)) p.availability.forEach(s => set.add(s)); });
+    return [...set];
+  }
+  function bestWindows(uids, limit = 2) {
+    const people = peopleList().filter(p => uids.includes(p.uid));
+    if (!people.length) return [];
+    const gmAv = gmWindows(), counts = {};
+    people.forEach(p => p.availability.forEach(slot => { counts[slot] = (counts[slot] || 0) + 1; }));
+    return Object.entries(counts)
+      .filter(([slot, n]) => n === people.length && (!gmAv.length || gmAv.includes(slot)))
+      .sort((a, b) => slotOrder(a[0]) - slotOrder(b[0]))
+      .slice(0, limit).map(([slot]) => slot);
   }
   function partyGroup(people) {
     const owners = new Set([...ui.party].map(k => k.split(':')[0]));
@@ -222,36 +301,40 @@
   }
 
   function renderOverlap() {
-    const people = peopleList(), { group, chars } = partyGroup(people);
+    const people = playersOnly(), { group } = partyGroup(people);
     const active = group.length >= 2, who = active ? group : people;
+    const gmAv = gmWindows(), dim = gmAv.length > 0, gm = isGM();
     const total = who.length, counts = {}, free = {};
     who.forEach(p => p.availability.forEach(slot => { counts[slot] = (counts[slot] || 0) + 1; (free[slot] = free[slot] || []).push(p); }));
     const nameOf = p => p.me ? `${p.name} (you)` : p.name;
     const missingIn = slot => who.filter(p => !(free[slot] || []).includes(p)).map(nameOf);
-    const bucket = n => n === 0 ? 0 : n / total <= .25 ? 1 : n / total <= .5 ? 2 : n / total <= .75 ? 3 : 4;
+    const bucket = n => n === 0 || !total ? 0 : n / total <= .25 ? 1 : n / total <= .5 ? 2 : n / total <= .75 ? 3 : 4;
     let html = `<table class="grid heat"><thead><tr><th scope="col" class="grid__corner"></th>${DAYS.map(d => `<th scope="col" abbr="${d.label}">${d.short}</th>`).join('')}</tr></thead><tbody>`;
     for (const b of BLOCKS) {
       html += `<tr><th scope="row" title="${esc(b.label)}"><span class="grid__block">${esc(b.short || b.label)}</span></th>`;
       for (const d of DAYS) {
         const slot = `${d.key}-${b.key}`, n = counts[slot] || 0, me = (S.me.availability || []).includes(slot);
-        const all = active && n === total;
-        html += `<td class="heat__cell h${bucket(n)}${me ? ' heat__cell--me' : ''}${all ? ' heat__cell--all' : ''}" tabindex="0" data-heat="${slot}" data-names="${esc((free[slot] || []).map(nameOf).join(', '))}" data-missing="${esc(active ? missingIn(slot).join(', ') : '')}" aria-label="${d.label} ${b.label}: ${n} of ${total} free">${n}</td>`;
+        const all = active && n === total, out = dim && !gmAv.includes(slot);
+        html += `<td class="heat__cell h${bucket(n)}${me ? ' heat__cell--me' : ''}${all ? ' heat__cell--all' : ''}${out ? ' heat__cell--out' : ''}" tabindex="0" data-heat="${slot}" data-names="${esc((free[slot] || []).map(nameOf).join(', '))}" data-missing="${esc(active ? missingIn(slot).join(', ') : '')}" data-out="${out ? '1' : ''}" aria-label="${d.label} ${b.label}: ${n} of ${total} free${out ? ', outside GM windows' : ''}">${n}</td>`;
       }
       html += '</tr>';
     }
     $('#overlap').innerHTML = html + '</tbody></table>';
     $('#overlap-total').textContent = active ? `${total} players picked` : `${total} player${total === 1 ? '' : 's'}`;
-    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1] || slotOrder(a[0]) - slotOrder(b[0]));
+    $('#overlap-note').textContent = dim
+      ? (gm ? 'Cells outside your windows are dimmed — change them under “When I can run”.' : 'Cells outside the GM’s windows are dimmed; expeditions only happen inside them.')
+      : (gm ? 'Mark when you can run and the grid will dim everything else.' : 'No GM has marked windows yet, so nothing is dimmed.');
+    const entries = Object.entries(counts).filter(([slot]) => !dim || gmAv.includes(slot)).sort((a, b) => b[1] - a[1] || slotOrder(a[0]) - slotOrder(b[0]));
     if (active) {
-      $('#best-label').textContent = 'Windows for this party';
+      $('#best-label').textContent = 'Windows for this party' + (dim ? ' · within GM windows' : '');
       const top = entries.filter(([, n]) => n >= Math.max(2, total - 1)).slice(0, 6);
       $('#best-windows').innerHTML = top.map(([slot, n]) => {
         const missing = missingIn(slot);
         return `<li class="${n === total ? 'best--all' : ''}"><span class="best__name">${esc(slotLabel(slot))}${missing.length ? `<small>without ${esc(listNames(missing))}</small>` : ''}</span><strong>${n === total ? `All ${total}` : `${n} of ${total}`}</strong>
-          <div class="best__act"><button type="button" class="btn btn--sm" data-action="party-request" data-win="${slot}">Request an expedition</button><button type="button" class="btn btn--sm btn--ghost" data-action="party-post" data-win="${slot}">Post here</button></div></li>`;
+          <div class="best__act"><button type="button" class="btn btn--sm player-only" data-action="party-request" data-win="${slot}">Request an expedition</button><button type="button" class="btn btn--sm gm-only" data-action="party-post" data-win="${slot}">Post here</button></div></li>`;
       }).join('') || '<li><span class="best__name">No window has more than one of them free — someone needs to widen their availability.</span></li>';
     } else {
-      $('#best-label').textContent = 'Best windows to post';
+      $('#best-label').textContent = 'Best windows to post' + (dim ? ' · within GM windows' : '');
       $('#best-windows').innerHTML = entries.slice(0, 3).map(([slot, n]) => `<li><span class="best__name">${esc(slotLabel(slot))}</span><strong>${n} of ${total}</strong></li>`).join('')
         || '<li><span class="best__name">No one has marked availability yet.</span></li>';
     }
@@ -264,7 +347,7 @@
         ? p.characters.map(c => { const k = partyKey(p.uid, c.id); return `<button type="button" class="chip" aria-pressed="${ui.party.has(k)}" data-pchip="${esc(k)}">${esc(c.name)} <small>${esc(c.level)}</small></button>`; }).join('')
         : (() => { const k = partyKey(p.uid, ''); return `<button type="button" class="chip" aria-pressed="${ui.party.has(k)}" data-pchip="${esc(k)}">${esc(p.name)} <small>no characters yet</small></button>`; })();
       return `<div class="chips__group"><span class="chips__owner">${p.me ? 'You' : esc(p.name)}</span>${chips}</div>`;
-    }).join('');
+    }).join('') || '<p class="hint hint--inline">No players have signed in yet.</p>';
     const n = ui.party.size;
     $('#party-summary').textContent = n ? `${n} picked` : 'Pick a party';
     $('#party-clear').hidden = !n;
@@ -275,18 +358,28 @@
   }
 
   async function partyRequest(win) {
-    const { group, chars } = partyGroup(peopleList());
+    const { group, chars } = partyGroup(playersOnly());
     if (group.length < 2) return;
     const [dk, bk] = win.split('-'), date = nextDateFor(dk);
     const here = group.filter(p => p.availability.includes(win)), away = group.filter(p => !p.availability.includes(win));
     const levels = chars.map(c => c.level), band = levels.length ? ` (levels ${Math.min(...levels)}–${Math.max(...levels)})` : '';
     const text = `${listNames(here.map(p => p.name))} can make ${slotLabel(win)}${away.length ? ` — ${listNames(away.map(p => p.name))} can't` : ''} — next ${fmtLong.format(U.parseKey(date))}${band} — and would like an expedition.`;
-    try { await A.log('request', text, { date, block: bk, party: group.map(p => p.uid) }); toast('Request posted — GMs will see it in Dispatches.', 'ok'); }
+    try { await A.log('request', text, { date, block: bk, party: group.map(p => p.uid) }); toast('Request posted — the GM will see it in Dispatches.', 'ok'); }
     catch (err) { toast(err.message || 'Could not post the request.', 'no'); }
   }
+  function prefillFor(win, levels, count) {
+    const [dk, bk] = win.split('-');
+    return { date: nextDateFor(dk), block: bk, seats: Math.max(4, count), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
+  }
   function partyPrefill(win) {
-    const { chars } = partyGroup(peopleList()), [dk, bk] = win.split('-'), levels = chars.map(c => c.level);
-    return { date: nextDateFor(dk), block: bk, seats: Math.max(4, chars.length), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
+    const { chars } = partyGroup(playersOnly());
+    return prefillFor(win, chars.map(c => c.level), chars.length);
+  }
+  function schedulePrefill(s) {
+    const party = s.party || [], levels = party.map(e => e.level), wins = bestWindows(party.map(e => e.uid), 1);
+    const base = wins.length ? prefillFor(wins[0], levels, party.length)
+      : { date: null, block: 'eve', seats: Math.max(4, party.length), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
+    return Object.assign(base, { sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '', joined: party.length, hasWindow: wins.length > 0 });
   }
 
   function renderMeta() {
@@ -319,18 +412,19 @@
     return fmtDate.format(new Date(ts));
   }
 
-  // --------------------------------------------------------------- actions
+  // --------------------------------------------------------------- seating
   async function place(sessId, charId) {
     const sess = byId(sessId), ch = myChar(charId);
     if (!sess || !ch) return;
     const v = R.eligibility(S, sess, ch);
     if (!v.ok) return refuse(sessId, v.reason);
-    const willFill = R.openSeats(sess) - 1 <= 0;
+    const prop = R.isProposal(sess), willFill = !prop && R.openSeats(sess) - 1 <= 0;
     try {
       await A.seat(sessId, ch);
       disarm();
-      toast(`${ch.name} seated on “${sess.title}”.`, 'ok');
-      await A.log('seat', `${ch.name} (${S.me.name}) is seated on “${sess.title}” — ${when(sess)}.`, { sessionId: sessId, date: sess.date, block: sess.block });
+      toast(prop ? `${ch.name} joined “${sess.title}”.` : `${ch.name} seated on “${sess.title}”.`, 'ok');
+      if (prop) await A.log('note', `${ch.name} (${S.me.name}) joined the proposal “${sess.title}”.`, { sessionId: sessId });
+      else await A.log('seat', `${ch.name} (${S.me.name}) is seated on “${sess.title}” — ${when(sess)}.`, { sessionId: sessId, date: sess.date, block: sess.block });
       if (willFill) await A.log('full', `“${sess.title}” is now full.`, { sessionId: sessId });
     } catch (err) { refuse(sessId, err.message || 'Could not take that seat.'); }
   }
@@ -338,10 +432,12 @@
   async function withdraw(sessId, charId) {
     const sess = byId(sessId); if (!sess) return;
     const e = (sess.party || []).find(x => x.charId === charId && isMine(x)); if (!e) return;
+    const prop = R.isProposal(sess);
     try {
       await A.unseat(sessId, charId);
       toast(`${e.name} withdrawn from “${sess.title}”.`, 'ok');
-      await A.log('open', `${e.name} (${S.me.name}) withdrew from “${sess.title}” — 1 seat opened.`, { sessionId: sessId, date: sess.date, block: sess.block });
+      if (prop) await A.log('note', `${e.name} (${S.me.name}) left the proposal “${sess.title}”.`, { sessionId: sessId });
+      else await A.log('open', `${e.name} (${S.me.name}) withdrew from “${sess.title}” — 1 seat opened.`, { sessionId: sessId, date: sess.date, block: sess.block });
     } catch (err) { toast(err.message || 'Could not withdraw.', 'no'); }
   }
 
@@ -353,7 +449,8 @@
     try {
       await A.move(fromId, toId, charId);
       toast(`${ch.name} moved to “${to.title}”.`, 'ok');
-      await A.log('open', `${ch.name} (${S.me.name}) moved from “${from.title}” to “${to.title}” — 1 seat opened on “${from.title}”.`, { sessionId: fromId, date: from.date, block: from.block });
+      const opened = R.isProposal(from) ? '' : ` — 1 seat opened on “${from.title}”`;
+      await A.log(R.isProposal(from) ? 'note' : 'open', `${ch.name} (${S.me.name}) moved from “${from.title}” to “${to.title}”${opened}.`, { sessionId: fromId, date: from.date || undefined, block: from.block || undefined });
     } catch (err) { refuse(toId, err.message || 'Could not move.'); }
   }
 
@@ -362,7 +459,7 @@
     const w = (S.me.watching || []).slice(), i = w.indexOf(id), on = i < 0;
     if (on) w.push(id); else w.splice(i, 1);
     await A.setWatching(w);
-    toast(on ? `Watching “${s.title}” — you'll be told when a seat opens.` : `No longer watching “${s.title}”.`, 'hint');
+    toast(on ? `Watching “${s.title}” — you'll be told when ${R.isProposal(s) ? 'it is scheduled' : 'a seat opens'}.` : `No longer watching “${s.title}”.`, 'hint');
   }
 
   async function toggleAvail(slot) {
@@ -384,40 +481,129 @@
     clearTimeout(availTimer);
     availTimer = setTimeout(async () => {
       const n = (S.me.availability || []).length;
-      const text = `${S.me.name} updated availability — free in ${n} window${n === 1 ? '' : 's'} a week.`;
+      const text = isGM()
+        ? `GM ${S.me.name} can run in ${n} window${n === 1 ? '' : 's'} a week.`
+        : `${S.me.name} updated availability — free in ${n} window${n === 1 ? '' : 's'} a week.`;
       const recent = S.dispatches.find(d => d.kind === 'avail' && d.uid === S.me.uid && Date.now() - d.ts < 3600e3);
       try { if (recent && A.relog) await A.relog(recent.id, text); else await A.log('avail', text); }
       catch (e) { /* the feed line is a courtesy; the availability itself is already saved */ }
     }, 4000);
   }
 
+  // ------------------------------------------------------------- GM actions
+  // Destructive actions take two clicks within a few seconds — no native confirm(), which
+  // sandboxed embeds block.
+  function confirmTwice(key, message, fn) {
+    if (pendingConfirm && pendingConfirm.key === key && Date.now() - pendingConfirm.at < 6000) { pendingConfirm = null; fn(); }
+    else { pendingConfirm = { key, at: Date.now() }; toast(`${message} — click again to confirm.`, 'hint'); }
+  }
+  function decline(id) {
+    const s = byId(id); if (!s) return;
+    confirmTwice('decline:' + id, `Decline “${s.title}”? It comes off the board`, async () => {
+      try { await A.setStatus(id, 'cancelled'); toast('Declined.', 'ok'); await A.log('cancelled', `“${s.title}” was declined by GM ${S.me.name}.`, { sessionId: id }); }
+      catch (err) { toast(err.message || 'Could not decline.', 'no'); }
+    });
+  }
+  function cancelExpedition(id) {
+    const s = byId(id); if (!s) return;
+    confirmTwice('cancel:' + id, `Cancel “${s.title}” (${when(s)})? Everyone seated is released`, async () => {
+      try { await A.setStatus(id, 'cancelled'); toast('Cancelled.', 'ok'); await A.log('cancelled', `“${s.title}” — ${when(s)} — was cancelled by GM ${S.me.name}.`, { sessionId: id, date: s.date, block: s.block }); }
+      catch (err) { toast(err.message || 'Could not cancel.', 'no'); }
+    });
+  }
+  function withdrawProposal(id) {
+    const s = byId(id); if (!s) return;
+    confirmTwice('withdraw:' + id, `Withdraw your proposal “${s.title}”?`, async () => {
+      try { await A.setStatus(id, 'cancelled'); toast('Proposal withdrawn.', 'ok'); await A.log('cancelled', `${S.me.name} withdrew the proposal “${s.title}”.`, { sessionId: id }); }
+      catch (err) { toast(err.message || 'Could not withdraw.', 'no'); }
+    });
+  }
+  async function toggleLock(id) {
+    const s = byId(id); if (!s) return;
+    const locked = !s.locked;
+    try { await A.setLocked(id, locked); toast(locked ? 'Roster locked.' : 'Roster unlocked.', 'ok'); await A.log('lock', `Roster ${locked ? 'locked' : 'unlocked'} for “${s.title}” — ${when(s)}.`, { sessionId: id, date: s.date, block: s.block }); }
+    catch (err) { toast(err.message || 'Could not change the lock.', 'no'); }
+  }
+  async function gmRemove(id, charId, uid) {
+    const s = byId(id); if (!s) return;
+    const e = (s.party || []).find(x => x.charId === charId && x.uid === uid); if (!e) return;
+    const prop = R.isProposal(s);
+    try {
+      await A.gmUnseat(id, charId, uid);
+      toast(`${e.name} taken off “${s.title}”.`, 'ok');
+      await A.log(prop ? 'note' : 'open', `${e.name} (${e.owner || ''}) was taken off “${s.title}” by the GM${prop ? '' : ' — 1 seat opened'}.`, { sessionId: id, date: s.date || undefined, block: s.block || undefined });
+    } catch (err) { toast(err.message || 'Could not remove them.', 'no'); }
+  }
+
   // ------------------------------------------------------------- dialogs
   function openPost(prefill) {
-    const f = $('#post-form');
+    const f = $('#post-form'), p = prefill || {};
     f.reset(); $('#post-error').hidden = true;
-    const gm = $('[name=gm]', f); if (!gm.value) gm.value = S.me.name;
+    $('[name=sessionId]', f).value = p.sessionId || '';
+    $('[name=title]', f).value = p.title || '';
+    $('[name=region]', f).value = p.region || '';
+    $('[name=notes]', f).value = p.notes || '';
+    $('[name=gm]', f).value = S.me.name;
     const t = new Date(); t.setDate(t.getDate() + 1);
-    const date = $('[name=date]', f); date.value = (prefill && prefill.date) || U.keyOf(t); date.min = U.todayKey();
-    const block = (prefill && prefill.block) || 'eve';
+    const date = $('[name=date]', f); date.value = p.date || U.keyOf(t); date.min = U.todayKey();
+    const block = p.block || 'eve';
     $('#post-block').innerHTML = BLOCKS.map(b => `<option value="${b.key}"${b.key === block ? ' selected' : ''}>${b.label} · ${b.time}</option>`).join('');
-    if (prefill) { $('[name=seats]', f).value = prefill.seats; $('[name=minLevel]', f).value = prefill.minLevel; $('[name=maxLevel]', f).value = prefill.maxLevel; }
+    if (p.seats) { $('[name=seats]', f).value = p.seats; $('[name=minLevel]', f).value = p.minLevel; $('[name=maxLevel]', f).value = p.maxLevel; }
+    $('#post-h').textContent = p.sessionId ? 'Schedule the proposal' : 'Post an expedition';
+    $('#post-submit').textContent = p.sessionId ? 'Schedule it' : 'Post to the board';
+    const note = $('#post-note'); note.hidden = !p.sessionId;
+    if (p.sessionId) note.innerHTML = `Scheduling <strong>${esc(p.title)}</strong> — ${p.joined} joined. ${p.hasWindow ? 'The date and window below are where they are all free' : 'No window fits everyone joined yet, so pick one'}; seats and levels are set from the party.`;
     $('#post-dialog').showModal();
   }
   async function submitPost(e) {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(e.target).entries()), err = $('#post-error');
+    const sessionId = v.sessionId || '', target = sessionId ? byId(sessionId) : null, party = target ? (target.party || []) : [];
     const s = { title: v.title.trim(), region: v.region.trim(), gm: v.gm.trim(), date: v.date, block: v.block,
       seats: +v.seats, minLevel: +v.minLevel, maxLevel: +v.maxLevel, notes: v.notes.trim() };
+    const lv = party.map(x => x.level);
     const problem = !s.title ? 'Give the expedition a title.' : !s.region ? 'Name the route or region.' : !s.gm ? 'Who is running it?'
       : (!s.date || s.date < U.todayKey()) ? 'Pick a date from today on.' : !(s.seats >= 1) ? 'At least one seat.'
-      : s.minLevel > s.maxLevel ? 'Min level is above max level.' : null;
+      : s.minLevel > s.maxLevel ? 'Min level is above max level.'
+      : (sessionId && !target) ? 'That proposal is no longer on the board.'
+      : s.seats < party.length ? `${party.length} have joined — at least that many seats.`
+      : (lv.length && (s.minLevel > Math.min(...lv) || s.maxLevel < Math.max(...lv))) ? `The joined characters are levels ${Math.min(...lv)}–${Math.max(...lv)}; widen the band or take them off first.`
+      : null;
     if (problem) { err.textContent = problem; err.hidden = false; return; }
     try {
-      const id = await A.postSession(s);
-      $('#post-dialog').close();
-      toast(`“${s.title}” is on the board.`, 'ok');
-      await A.log('new', `New expedition posted: “${s.title}” — ${when(s)} (GM ${s.gm}).`, { sessionId: id, date: s.date, block: s.block });
+      if (sessionId) {
+        await A.schedule(sessionId, s);
+        $('#post-dialog').close();
+        toast(`“${s.title}” is scheduled.`, 'ok');
+        await A.log('scheduled', `“${s.title}” is scheduled — ${when(s)} (GM ${s.gm}). ${party.length} seated, ${Math.max(0, s.seats - party.length)} open.`, { sessionId, date: s.date, block: s.block });
+      } else {
+        const id = await A.postSession(s);
+        $('#post-dialog').close();
+        toast(`“${s.title}” is on the board.`, 'ok');
+        await A.log('new', `New expedition posted: “${s.title}” — ${when(s)} (GM ${s.gm}).`, { sessionId: id, date: s.date, block: s.block });
+      }
     } catch (ex) { err.textContent = ex.message || 'Could not post.'; err.hidden = false; }
+  }
+
+  function openPropose() {
+    if (!S.me.characters.length) { toast('Add a character to your roster first — a proposal needs someone to go.', 'hint'); openProfile(); return; }
+    const f = $('#propose-form'); f.reset(); $('#propose-error').hidden = true;
+    $('#propose-char').innerHTML = S.me.characters.map(c => `<option value="${esc(c.id)}">${esc(c.name)} · ${esc(c.class || '')} · Lvl ${esc(c.level)}</option>`).join('');
+    $('#propose-dialog').showModal();
+  }
+  async function submitPropose(e) {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(e.target).entries()), err = $('#propose-error');
+    const ch = myChar(v.charId);
+    const p = { title: v.title.trim(), region: v.region.trim(), notes: v.notes.trim(), character: ch };
+    const problem = !p.title ? 'Give it a title.' : !p.region ? 'Say where, or what for.' : !ch ? 'Pick the character you would bring.' : null;
+    if (problem) { err.textContent = problem; err.hidden = false; return; }
+    try {
+      const id = await A.propose(p);
+      $('#propose-dialog').close();
+      toast(`“${p.title}” is proposed — the GM will see it.`, 'ok');
+      await A.log('proposal', `${S.me.name} proposed “${p.title}” — ${p.region}. Join it from the board.`, { sessionId: id });
+    } catch (ex) { err.textContent = ex.message || 'Could not propose.'; err.hidden = false; }
   }
 
   function openProfile() {
@@ -448,7 +634,7 @@
       level: Math.min(20, Math.max(1, +$('[name=clevel]', r).value || 1)),
     })).filter(c => c.name);
     const removed = S.me.characters.filter(c => !characters.some(n => n.id === c.id));
-    const stuck = removed.find(c => upcoming().some(s => (s.party || []).some(en => en.charId === c.id && isMine(en))));
+    const stuck = removed.find(c => live().some(s => !R.isPast(s) && (s.party || []).some(en => en.charId === c.id && isMine(en))));
     if (stuck) { err.textContent = `${stuck.name} is seated on an upcoming expedition — withdraw first.`; err.hidden = false; return; }
     try {
       await A.saveProfile({ name, handle: $('[name=handle]', f).value.trim().replace(/^@/, ''), discord: $('[name=discord]', f).value.trim(), characters });
@@ -487,9 +673,12 @@
   function concernsMe(d) {
     const sess = d.sessionId ? byId(d.sessionId) : null;
     const fitsMe = d.date && d.block ? (S.me.availability || []).includes(`${U.weekdayOf(d.date)}-${d.block}`) : false;
+    const involved = sess && (isWatching(sess.id) || R.myEntry(S.me, sess));
     if (d.kind === 'open' && sess && isWatching(sess.id)) return 'watching';
     if (d.kind === 'open' && fitsMe && S.me.prefs && S.me.prefs.alertOnOpenSeat && !(sess && R.myEntry(S.me, sess))) return 'fits';
     if (d.kind === 'new' && fitsMe) return 'fits';
+    if ((d.kind === 'scheduled' || d.kind === 'cancelled' || d.kind === 'lock') && involved) return 'yours';
+    if ((d.kind === 'proposal' || d.kind === 'request') && isGM()) return 'gm';
     return null;
   }
 
@@ -507,11 +696,12 @@
 
   // ----------------------------------------------------------------- events
   document.addEventListener('click', e => {
-    const t = e.target.closest('[data-action],[data-char],[data-chip],[data-open],[data-drop],[data-watch],[data-slot],[data-preset],[data-filter],[data-pchip]');
+    const t = e.target.closest('[data-action],[data-gmremove],[data-char],[data-chip],[data-open],[data-drop],[data-watch],[data-slot],[data-preset],[data-filter],[data-pchip]');
     if (!t) return;
     const d = t.dataset;
     if (d.action) return doAction(d.action, t);
     if (!S) return;
+    if (d.gmremove !== undefined) return gmRemove(d.sess, d.gmremove, d.gmuid);
     if (d.pchip !== undefined) {
       if (ui.party.has(d.pchip)) ui.party.delete(d.pchip); else ui.party.add(d.pchip);
       renderOverlap();
@@ -529,11 +719,19 @@
   });
 
   function doAction(name, el) {
+    const sess = el.dataset.sess;
     switch (name) {
       case 'sign-in': A.signIn().catch(err => toast(err.message || 'Sign-in failed.', 'no')); break;
       case 'sign-out': A.signOut(); break;
       case 'post-open': openPost(); break;
       case 'post-close': $('#post-dialog').close(); break;
+      case 'propose-open': openPropose(); break;
+      case 'propose-close': $('#propose-dialog').close(); break;
+      case 'schedule-open': { const s = byId(sess); if (s) openPost(schedulePrefill(s)); break; }
+      case 'decline': decline(sess); break;
+      case 'cancel': cancelExpedition(sess); break;
+      case 'withdraw-proposal': withdrawProposal(sess); break;
+      case 'toggle-lock': toggleLock(sess); break;
       case 'profile-open': openProfile(); break;
       case 'profile-close': $('#profile-dialog').close(); break;
       case 'char-add': $('#char-rows').insertAdjacentHTML('beforeend', charRow({})); $('#char-rows .char-row:last-child input').focus(); break;
@@ -550,19 +748,20 @@
         if (resetArmedAt && Date.now() - resetArmedAt < 6000) { resetArmedAt = 0; seenDispatches = null; A.reset(); toast('Sample data restored.', 'ok'); }
         else { resetArmedAt = Date.now(); toast('This wipes the changes made in this browser — click “Reset sample data” again to confirm.', 'hint'); }
         break;
-      case 'boot-local': $('#boot-error').hidden = true; KS.boot(new KS.LocalAdapter()); break;
+      case 'boot-local': $('#boot-error').hidden = true; KS.boot(new KS.LocalAdapter({})); break;
     }
   }
 
   $('#post-form').addEventListener('submit', submitPost);
+  $('#propose-form').addEventListener('submit', submitPropose);
   $('#profile-form').addEventListener('submit', submitProfile);
   $('#pref-openseat').addEventListener('change', e => A.setPrefs(Object.assign({}, S.me.prefs || {}, { alertOnOpenSeat: e.target.checked })));
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && armed) disarm(); });
   document.addEventListener('mouseover', e => { const c = e.target.closest('[data-heat]'); if (c) showHeat(c); });
   document.addEventListener('focusin', e => { const c = e.target.closest('[data-heat]'); if (c) showHeat(c); });
   function showHeat(c) {
-    const missing = c.dataset.missing;
-    $('#overlap-detail').textContent = `${slotLabel(c.dataset.heat)}: ${c.dataset.names || 'nobody yet'}${missing ? ` — not ${missing}` : ''}`;
+    const missing = c.dataset.missing, out = c.dataset.out;
+    $('#overlap-detail').textContent = `${slotLabel(c.dataset.heat)}: ${c.dataset.names || 'nobody yet'}${missing ? ` — not ${missing}` : ''}${out ? ' · outside GM windows' : ''}`;
   }
   setInterval(() => { if (S) renderDispatches(); }, 60000);
 
