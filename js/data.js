@@ -227,10 +227,8 @@ window.KS = window.KS || {};
       D('d1', 2,  'new',      'New expedition posted: “Shadow-Prowler (NE) — The Quiet Mile” (GM Imre).', { uid: 'gm-imre', sessionId: 's8', date: s('s8').date, block: 'eve' }),
       D('d2', 5,  'open',     'Gaius (Halvard) withdrew from “The Salt Stair” — 1 seat opened.', { uid: 'p-halvard', sessionId: 's1', date: s('s1').date, block: 'eve' }),
       D('d0', 6,  'proposal', 'Ola proposed “Farmbelt Spoke (W) — the empty waystation” — Farmbelt Spoke (W). Join it from the board.', { uid: 'p-ola', sessionId: 'p2' }),
-      D('d8', 9,  'avail',    'Tess is away Saturday week — two windows blocked.', { uid: 'p-tess' }),
       D('d7', 20, 'proposal', 'Marek proposed “The Mill on the Tupperwine” — The Tupperwine, upstream of the ford. Join it from the board.', { uid: 'p-marek', sessionId: 'p1' }),
       D('d3', 26, 'full',     '“Farmbelt Ring — Night Watch” is now full.', { uid: 'p-halvard', sessionId: 's2' }),
-      D('d4', 31, 'avail',    'Marek updated availability — free in 7 windows a week.', { uid: 'p-marek' }),
       D('d5', 52, 'seat',     'Maud Pellinger (Rowan Ashby) is seated on “Dwarven Trade Road — Toll House”.', { uid: 'local', sessionId: 's4', date: s('s4').date, block: 'eve' }),
       D('d6', 70, 'new',      'New expedition posted: “The Salt Stair” (GM Dahl).', { uid: dahl.gmUid, sessionId: 's1', date: s('s1').date, block: 'eve' }),
     ].filter(d => asGM ? d.id !== 'd5' : true);

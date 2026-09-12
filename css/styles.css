@@ -311,14 +311,18 @@ body.is-armed .seat--open, body.is-dragging-char .seat--open { border-style: sol
 }
 
 /* ---------- dispatches ---------- */
-.disp { display: grid; grid-template-columns: 74px 1fr; gap: 3px 10px; padding: 10px 0; border-bottom: 1px solid var(--hair); font-size: 13px; position: relative; }
+/* The feed is bounded and scrolls inside itself so the panel below it stays put. */
+.dispatches { max-height: 264px; overflow-y: auto; overscroll-behavior: contain; }
+.disp { padding: 6px 0 7px 10px; border-bottom: 1px solid var(--hair); font-size: 12.5px; position: relative; }
 .disp:last-child { border-bottom: 0; }
-.disp__kind { font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); padding-top: 2px; line-height: 1.3; }
+.disp__meta { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.disp__kind { font-size: 9.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
 .disp--open .disp__kind, .disp--new .disp__kind, .disp--request .disp__kind, .disp--forme .disp__kind { color: var(--crimson); }
-.disp__text { grid-column: 2; }
-.disp__time { grid-column: 2; font-size: 11px; color: var(--ink-3); }
-.disp--unread::before { content: ""; position: absolute; left: -10px; top: 15px; width: 5px; height: 5px; background: var(--crimson); }
-.disp--empty { color: var(--ink-3); }
+.disp__text { display: block; margin-top: 1px; line-height: 1.35; }
+.disp__time { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; }
+/* Inside the scroller the unread mark sits within the row padding, not outside it. */
+.disp--unread::before { content: ""; position: absolute; left: 0; top: 10px; width: 5px; height: 5px; background: var(--crimson); }
+.disp--empty { color: var(--ink-3); padding-left: 0; }
 .prefs { display: grid; gap: 10px; padding: 12px var(--pad); border-top: 1px solid var(--rule); font-size: 12.5px; }
 .prefs label { display: flex; gap: 8px; align-items: flex-start; }
 .prefs input[type=checkbox] { accent-color: var(--crimson); margin: 2px 0 0; }

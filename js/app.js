@@ -19,9 +19,9 @@
   let armed = null;              // character id armed for tap-to-place
   let dragging = null;           // { kind: 'char' | 'chip', charId, sessId }
   let seenDispatches = null;     // ids already seen — new ones may raise a browser alert
-  let availTimer = null, toastTimer = null, profileOpenedOnce = false, resetArmedAt = 0;
+  let toastTimer = null, profileOpenedOnce = false, resetArmedAt = 0;
   let pendingConfirm = null;     // { key, at } — two-click confirmation for destructive actions
-  const ui = { filter: 'all', party: new Set(), availTab: 'pattern', availWeek: null, overlapWeek: null };
+  const ui = { filter: 'all', party: new Set(), availTab: 'pattern', availWeek: null, overlapWeek: null, dispShowAll: false };
 
   const KIND = { new: 'Posted', proposal: 'Proposed', scheduled: 'Scheduled', cancelled: 'Cancelled', lock: 'Roster', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', request: 'Request', note: 'Note' };
   const fmtDay  = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
@@ -296,16 +296,20 @@
   }
 
   function renderDispatches() {
-    const readAt = S.me.readAt || 0, list = S.dispatches.slice(0, 25);
-    const unread = S.dispatches.filter(d => d.ts > readAt).length;
-    $('#disp-unread').textContent = unread ? `${unread} new` : 'Up to date';
+    const readAt = S.me.readAt || 0;
+    const unread = S.dispatches.filter(d => d.ts > readAt);
+    const list = (ui.dispShowAll ? S.dispatches : unread).slice(0, 40);
+    $('#disp-unread').textContent = unread.length ? `${unread.length} new` : 'Up to date';
+    $('#disp-toggle').textContent = ui.dispShowAll ? 'Unread only' : 'Show all';
+    $('#disp-toggle').hidden = !ui.dispShowAll && !S.dispatches.length;
     $('#dispatches').innerHTML = list.map(d => {
       const forMe = d.uid !== S.me.uid && concernsMe(d);
       return `<li class="disp disp--${esc(d.kind)}${d.ts > readAt ? ' disp--unread' : ''}${forMe ? ' disp--forme' : ''}">
-        <span class="disp__kind">${forMe ? 'For you · ' : ''}${esc(KIND[d.kind] || d.kind)}</span>
-        <span class="disp__text">${esc(d.text)}</span>
-        <time class="disp__time" datetime="${new Date(d.ts).toISOString()}">${esc(relTime(d.ts))}</time></li>`;
-    }).join('') || '<li class="disp disp--empty">Nothing yet.</li>';
+        <span class="disp__meta"><span class="disp__kind">${forMe ? 'For you · ' : ''}${esc(KIND[d.kind] || d.kind)}</span><time class="disp__time" datetime="${new Date(d.ts).toISOString()}">${esc(relTime(d.ts))}</time></span>
+        <span class="disp__text">${esc(d.text)}</span></li>`;
+    }).join('') || (ui.dispShowAll
+      ? '<li class="disp disp--empty">Nothing yet.</li>'
+      : `<li class="disp disp--empty">Nothing new.${S.dispatches.length ? ' <button type="button" class="linklike" data-action="disp-toggle">Show all</button>' : ''}</li>`);
     $('#pref-openseat').checked = !!(S.me.prefs && S.me.prefs.alertOnOpenSeat);
     renderBrowserAlerts();
   }
@@ -549,7 +553,7 @@
   async function toggleAvail(slot) {
     const a = (S.me.availability || []).slice(), i = a.indexOf(slot);
     if (i < 0) a.push(slot); else a.splice(i, 1);
-    await A.setAvailability(a); noteAvail();
+    await A.setAvailability(a);
   }
   async function preset(name) {
     let a = (S.me.availability || []).slice();
@@ -557,7 +561,7 @@
     if (name === 'clear') a = [];
     if (name === 'weeknights') add(['mon', 'tue', 'wed', 'thu', 'fri'].map(d => `${d}-eve`));
     if (name === 'weekends') add(['sat', 'sun'].flatMap(d => BLOCKS.map(b => `${d}-${b.key}`)));
-    await A.setAvailability(a); noteAvail();
+    await A.setAvailability(a);
   }
   // Clicking a date cell flips that date's answer. If the new answer is what the layers below
   // already say, the override is dropped rather than stored, so exceptions never accumulate —
@@ -568,30 +572,17 @@
     const me = S.me, want = !R.freeOn(me, dateKey, block);
     const ex = Object.assign({}, me.exceptions || {});
     if (want === R.baseline(me, dateKey, block)) delete ex[key]; else ex[key] = want;
-    await A.setExceptions(R.pruneExceptions(ex)); noteAvail();
+    await A.setExceptions(R.pruneExceptions(ex));
   }
   function clearExceptions() {
     const n = Object.keys(S.me.exceptions || {}).length;
     if (!n) return;
     confirmTwice('clear-ex', `Drop all ${n} date override${n === 1 ? '' : 's'}?`, async () => {
-      await A.setExceptions({}); toast('Date overrides cleared — your usual week applies.', 'ok'); noteAvail();
+      await A.setExceptions({}); toast('Date overrides cleared — your usual week applies.', 'ok');
     });
   }
-  // One dispatch per editing session, not one per cell: wait for a pause, then refresh my most
-  // recent availability line if it is under an hour old instead of adding another.
-  function noteAvail() {
-    clearTimeout(availTimer);
-    availTimer = setTimeout(async () => {
-      const n = (S.me.availability || []).length, ex = Object.keys(S.me.exceptions || {}).length;
-      const tail = ex ? `, with ${ex} date override${ex === 1 ? '' : 's'}` : '';
-      const text = isGM()
-        ? `GM ${S.me.name} can run in ${n} window${n === 1 ? '' : 's'} a week${tail}.`
-        : `${S.me.name} updated availability — free in ${n} window${n === 1 ? '' : 's'} a week${tail}.`;
-      const recent = S.dispatches.find(d => d.kind === 'avail' && d.uid === S.me.uid && Date.now() - d.ts < 3600e3);
-      try { if (recent && A.relog) await A.relog(recent.id, text); else await A.log('avail', text); }
-      catch (e) { /* the feed line is a courtesy; the availability itself is already saved */ }
-    }, 4000);
-  }
+  // Availability changes deliberately write no dispatch. They were the noisiest thing in the
+  // feed and told nobody anything the overlap grid does not already show live.
 
   // ------------------------------------------------------------- GM actions
   // Destructive actions take two clicks within a few seconds — no native confirm(), which
@@ -859,6 +850,7 @@
       case 'party-request': partyRequest(el.dataset.date, el.dataset.block); break;
       case 'party-post': openPost(partyPrefill(el.dataset.date, el.dataset.block)); break;
       case 'mark-read': A.markRead(); break;
+      case 'disp-toggle': ui.dispShowAll = !ui.dispShowAll; renderDispatches(); break;
       case 'browser-alerts': toggleBrowserAlerts(); break;
       case 'gcal-sync': if (KS.gcalSync) KS.gcalSync(); break;
       case 'gcal-clear': if (KS.gcalClear) KS.gcalClear(); break;

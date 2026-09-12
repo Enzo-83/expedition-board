@@ -13,7 +13,7 @@
      setStatus(id, status)  setLocked(id, bool)       GM (proposer may cancel their own proposal)
      gmUnseat(id, charId, uid)                        GM: remove anyone from a roster
      seat(sessId, character)  unseat(sessId, charId)  move(fromId, toId, charId)   (throw Error(reason) to refuse)
-     log(kind, text, meta)      writes one dispatch;  relog(id, text) refreshes one of mine
+     log(kind, text, meta)      writes one dispatch (the feed is append-only)
      reset()                    local only
 
    state = { me, players[], gmUids[], sessions[], dispatches[] } — see data.js for the shapes. */
@@ -121,13 +121,6 @@ window.KS = window.KS || {};
     async log(kind, text, meta = {}) {
       this.state.dispatches.unshift(Object.assign({ id: 'd' + KS.util.uid(), ts: Date.now(), kind, text, uid: this.state.me.uid }, meta));
       if (this.state.dispatches.length > 80) this.state.dispatches.length = 80;
-      this._emit();
-    }
-    async relog(id, text) {
-      const d = this.state.dispatches.find(x => x.id === id);
-      if (!d) return this.log('avail', text);
-      d.text = text; d.ts = Date.now();
-      this.state.dispatches.sort((a, b) => b.ts - a.ts);
       this._emit();
     }
     reset() { this.state = KS.sample(this.opts); this._emit(); }

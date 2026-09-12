@@ -146,27 +146,6 @@
   </section>
 
   <div class="area-rail">
-    <!-- ===== Dispatches ===== -->
-    <section class="panel" aria-labelledby="disp-h">
-      <div class="panel__head">
-        <h2 id="disp-h">Dispatches</h2>
-        <span class="label" id="disp-unread">—</span>
-      </div>
-      <div class="panel__body panel__body--list">
-        <ul id="dispatches" class="dispatches"></ul>
-        <div class="row">
-          <button type="button" class="btn btn--sm btn--ghost" data-action="mark-read">Mark all read</button>
-        </div>
-      </div>
-      <div class="prefs">
-        <label><input type="checkbox" id="pref-openseat"> <span>Flag seats that open in a window I'm free for</span></label>
-        <div class="row">
-          <button type="button" class="btn btn--sm" id="btn-browser-alerts" data-action="browser-alerts" aria-pressed="false">Enable browser alerts</button>
-          <span class="hint hint--inline" id="browser-alerts-note"></span>
-        </div>
-      </div>
-    </section>
-
     <!-- ===== Network overlap ===== -->
     <section class="panel" aria-labelledby="overlap-h">
       <div class="panel__head">
@@ -200,6 +179,28 @@
         </div>
       </div>
     </section>
+    <!-- ===== Dispatches ===== -->
+    <section class="panel" aria-labelledby="disp-h">
+      <div class="panel__head">
+        <h2 id="disp-h">Dispatches</h2>
+        <span class="label" id="disp-unread">—</span>
+      </div>
+      <div class="panel__body panel__body--list">
+        <ul id="dispatches" class="dispatches"></ul>
+        <div class="row">
+          <button type="button" class="btn btn--sm btn--ghost" data-action="mark-read">Mark all read</button>
+          <button type="button" class="btn btn--sm btn--ghost" data-action="disp-toggle" id="disp-toggle">Show all</button>
+        </div>
+      </div>
+      <div class="prefs">
+        <label><input type="checkbox" id="pref-openseat"> <span>Flag seats that open in a window I'm free for</span></label>
+        <div class="row">
+          <button type="button" class="btn btn--sm" id="btn-browser-alerts" data-action="browser-alerts" aria-pressed="false">Enable browser alerts</button>
+          <span class="hint hint--inline" id="browser-alerts-note"></span>
+        </div>
+      </div>
+    </section>
+
   </div>
 
 </main>

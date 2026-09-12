@@ -66,16 +66,12 @@ service cloud.firestore {
       allow delete: if isGM();
     }
 
-    // Every dispatch is signed by its author. Authors may refresh their own entry (used to keep
-    // one availability line per editing session); nothing is ever deleted from the feed.
+    // The feed is append-only and every entry is signed by its author. Editing was only ever
+    // needed to coalesce availability lines, and those are no longer written at all.
     match /dispatches/{id} {
       allow read: if allowed();
       allow create: if allowed() && request.resource.data.uid == request.auth.uid;
-      allow update: if allowed()
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == resource.data.uid
-        && request.resource.data.kind == resource.data.kind;
-      allow delete: if false;
+      allow update, delete: if false;
     }
   }
 }
