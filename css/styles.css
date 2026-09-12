@@ -388,6 +388,14 @@ td.heat__cell--past { background: transparent; opacity: .3; }
 .gcal__state { font-size: 11.5px; color: var(--ink-3); }
 .gcal__state--on { color: var(--crimson); font-weight: 500; }
 .gcal .row { gap: 6px; }
+.gcal__break summary { font-size: 11.5px; font-weight: 600; letter-spacing: .04em; color: var(--ink-2); cursor: pointer; padding: 4px 0; }
+.gcal__break summary:hover { color: var(--crimson); }
+.gcal__break ul { max-height: 220px; overflow-y: auto; border: 1px solid var(--hair); margin: 6px 0; }
+.gcal__break li { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 4px 8px; font-size: 11.5px; border-bottom: 1px solid var(--hair); }
+.gcal__break li:last-child { border-bottom: 0; }
+.gcal__break li.is-light { background: var(--crimson-tint); }
+.gcal__break li strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gcal__break li small { color: var(--ink-3); font-weight: 400; }
 
 /* ---------- roles: GM vs player ---------- */
 body:not(.is-gm) .gm-only, body.is-gm .player-only { display: none !important; }

@@ -34,6 +34,7 @@ window.KS = window.KS || {};
     blockOf: key => KS.BLOCKS.find(b => b.key === key) || { key, label: key, short: key, time: '' },
     dayOf: key => KS.DAYS.find(d => d.key === key) || { key, short: '?', label: key },
     blockIndex: key => KS.BLOCKS.findIndex(b => b.key === key),
+    blockMins: b => ((typeof b === 'string' ? U.blockOf(b) : b).to - (typeof b === 'string' ? U.blockOf(b) : b).from) * 60,
     esc: s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     initials: name => String(name || '?').split(/[\s.\-]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?',
     uid: () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
@@ -70,7 +71,16 @@ window.KS = window.KS || {};
     exKey: (dateKey, block) => `${dateKey}-${block}`,
     inPattern: (p, dateKey, block) => (p.availability || []).includes(U.weekdayOf(dateKey) + '-' + block),
     overridden: (p, dateKey, block) => !!(p.exceptions && Object.prototype.hasOwnProperty.call(p.exceptions, R.exKey(dateKey, block))),
-    calendarBusy: (p, dateKey, block) => !!(p.gcalBusy && p.gcalBusy.indexOf(R.exKey(dateKey, block)) >= 0),
+    // Minutes of the window the calendar shows as busy: null when it is not blocked at all,
+    // otherwise the count. `gcalBusy` is a {key: minutes} map; the first version of the sync
+    // wrote a plain array of keys, and those resolve to 0 — blocked, duration unrecorded.
+    calendarBusyMins(p, dateKey, block) {
+      const g = p && p.gcalBusy, k = R.exKey(dateKey, block);
+      if (!g) return null;
+      if (Array.isArray(g)) return g.indexOf(k) >= 0 ? 0 : null;
+      return Object.prototype.hasOwnProperty.call(g, k) ? (g[k] | 0) : null;
+    },
+    calendarBusy: (p, dateKey, block) => R.calendarBusyMins(p, dateKey, block) !== null,
     // What the answer would be with no hand-set override — the layers under `exceptions`.
     baseline: (p, dateKey, block) => R.calendarBusy(p, dateKey, block) ? false : R.inPattern(p, dateKey, block),
     freeOn(p, dateKey, block) {

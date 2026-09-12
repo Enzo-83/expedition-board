@@ -26,12 +26,28 @@
     return U.keyOf(d) === today ? `today at ${time}` : `${new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(d)}, ${time}`;
   };
 
+  // Every blocked window, least-busy first — the ones at the top are the windows a short
+  // appointment has taken whole, which is what you look at to judge the rule.
+  function breakdown(me) {
+    const g = me.gcalBusy;
+    if (!g || Array.isArray(g)) return null;              // the first sync format carried no minutes
+    const rows = Object.keys(g).map(k => {
+      const date = k.slice(0, 10), block = k.slice(11), b = U.blockOf(block);
+      return { date, block, label: `${new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(U.parseKey(date))} ${b.short}`, mins: g[k] | 0, of: U.blockMins(b) };
+    }).filter(r => r.date >= U.todayKey());
+    rows.sort((a, b) => (a.mins / a.of) - (b.mins / b.of) || (a.date < b.date ? -1 : 1));
+    return rows;
+  }
+
   KS.renderGcal = function () {
     const el = $('#gcal'); if (!el) return;
     const S = KS.state();
     if (!S || !KS.isGM()) { el.innerHTML = ''; return; }
-    const me = S.me, n = (me.gcalBusy || []).length, at = me.gcalSyncedAt;
+    const me = S.me, g = me.gcalBusy, at = me.gcalSyncedAt;
+    const n = !g ? 0 : Array.isArray(g) ? g.length : Object.keys(g).length;
     const local = !KS.adapter().getCalendarToken;
+    const rows = breakdown(me);
+    const light = rows ? rows.filter(r => r.mins * 2 < r.of).length : 0;
     el.innerHTML = `
       <div class="gcal__head">
         <span class="label">Google Calendar</span>
@@ -43,10 +59,26 @@
         <button type="button" class="btn btn--sm" data-action="gcal-sync"${local || busyNow ? ' disabled' : ''}>${busyNow ? 'Syncing…' : at ? 'Sync again' : 'Sync from Google Calendar'}</button>
         ${n ? '<button type="button" class="btn btn--sm btn--ghost" data-action="gcal-clear">Clear</button>' : ''}
       </div>
+      ${n && !rows ? '<p class="hint hint--inline">Synced before minutes were recorded — sync again to see how much of each window is actually busy.</p>' : ''}
+      ${rows && rows.length ? `<details class="gcal__break">
+        <summary>How busy each blocked window is${light ? ` · ${light} under half` : ''}</summary>
+        <ul>${rows.map(r => `<li class="${r.mins * 2 < r.of ? 'is-light' : ''}"><span>${U.esc(r.label)}</span><strong>${r.mins} <small>/ ${r.of} min</small></strong></li>`).join('')}</ul>
+        <p class="hint hint--inline">Any overlap blocks the whole window. Rows near the top are barely busy — tell Claude if you want a threshold instead.</p>
+      </details>` : ''}
       <p class="hint hint--inline">${local
         ? 'Calendar sync runs on the live board, not this sample.'
         : 'Blocks windows your calendar shows as busy. Reads times only, never event titles, and never opens a window your usual week closes.'}</p>`;
   };
+
+  function merge(ivs) {
+    const sorted = ivs.slice().sort((a, b) => a[0] - b[0]), out = [];
+    for (const iv of sorted) {
+      const last = out[out.length - 1];
+      if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]);
+      else out.push([iv[0], iv[1]]);
+    }
+    return out;
+  }
 
   // Busy intervals overlapping a window block it — any overlap, however short.
   function blockBounds(dateKey, b) {
@@ -76,18 +108,25 @@
       const cal = (json.calendars && json.calendars.primary) || {};
       if (cal.errors && cal.errors.length) throw new Error(`Google could not read that calendar (${cal.errors[0].reason}).`);
 
-      const busy = (cal.busy || []).map(iv => [Date.parse(iv.start), Date.parse(iv.end)]).filter(iv => iv[0] && iv[1]);
-      const me = S.me, blocked = [];
+      // Merge before measuring: two overlapping busy events must not count their minutes twice.
+      const busy = merge((cal.busy || []).map(iv => [Date.parse(iv.start), Date.parse(iv.end)]).filter(iv => iv[0] && iv[1]));
+      const me = S.me, blocked = {};
+      let count = 0;
       for (const date of dates) {
         for (const b of BLOCKS) {
           if (!R.inPattern(me, date, b.key)) continue;        // only ever blocks what the pattern opens
           const [s, e] = blockBounds(date, b);
-          if (busy.some(iv => iv[0] < e && iv[1] > s)) blocked.push(R.exKey(date, b.key));
+          let mins = 0;
+          for (const iv of busy) {
+            const lo = Math.max(iv[0], s), hi = Math.min(iv[1], e);
+            if (hi > lo) mins += (hi - lo) / 60000;
+          }
+          if (mins > 0) { blocked[R.exKey(date, b.key)] = Math.round(mins); count++; }
         }
       }
       await A.setCalendarBusy(blocked, Date.now());
-      KS.toast(blocked.length
-        ? `Calendar synced — ${blocked.length} window${blocked.length === 1 ? '' : 's'} blocked over the next ${KS.HORIZON_WEEKS} weeks.`
+      KS.toast(count
+        ? `Calendar synced — ${count} window${count === 1 ? '' : 's'} blocked over the next ${KS.HORIZON_WEEKS} weeks.`
         : 'Calendar synced — nothing in it clashes with the windows you can run.', 'ok');
       if (KS.refreshAvail) KS.refreshAvail();
     } catch (err) {
@@ -100,7 +139,7 @@
   KS.gcalClear = async function () {
     const A = KS.adapter();
     try {
-      await A.setCalendarBusy([], null);
+      await A.setCalendarBusy({}, null);
       KS.toast('Calendar blocks cleared — your usual week and any date overrides still apply.', 'ok');
       if (KS.refreshAvail) KS.refreshAvail();
     } catch (err) { KS.toast(err.message || 'Could not clear.', 'no'); }

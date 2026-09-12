@@ -162,7 +162,9 @@
       for (const k of dates) {
         const past = k < today, free = R.freeOn(me, k, b.key), over = R.overridden(me, k, b.key);
         const cal = !over && R.calendarBusy(me, k, b.key);
-        const why = over ? ` — set by hand (usually ${R.inPattern(me, k, b.key) ? 'free' : 'not free'})` : cal ? ' — your Google Calendar is busy then; click to override' : '';
+        const mins = cal ? R.calendarBusyMins(me, k, b.key) : 0;
+        const why = over ? ` — set by hand (usually ${R.inPattern(me, k, b.key) ? 'free' : 'not free'})`
+          : cal ? ` — Google Calendar busy${mins ? ` ${mins} of ${U.blockMins(b)} min` : ''}; click to override` : '';
         html += `<td>${past
           ? '<span class="avail__cell avail__cell--past" aria-hidden="true"></span>'
           : `<button type="button" class="avail__cell${over ? ' avail__cell--over' : ''}${cal ? ' avail__cell--cal' : ''}" data-ex="${k}-${b.key}" aria-pressed="${free}" aria-label="${dateLabel(k)} ${b.label}${over ? ', set by hand' : cal ? ', busy in Google Calendar' : ''}" title="${dateLabel(k)} ${b.label}${why}"></button>`}</td>`;

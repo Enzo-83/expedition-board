@@ -116,7 +116,7 @@ class FirebaseAdapter {
   // Exceptions are replaced wholesale (they are pruned of past dates first), so a stale
   // client can never resurrect an override the player already dropped.
   async setExceptions(ex) { await this.F.updateDoc(this._me(), { exceptions: ex || {} }); }
-  async setCalendarBusy(list, syncedAt) { await this.F.updateDoc(this._me(), { gcalBusy: list || [], gcalSyncedAt: syncedAt || null }); }
+  async setCalendarBusy(busy, syncedAt) { await this.F.updateDoc(this._me(), { gcalBusy: busy || {}, gcalSyncedAt: syncedAt || null }); }
 
   // An OAuth access token for a Google API, obtained by re-consenting in a popup. Firebase
   // never stores or refreshes these, so it is cached in memory for the hour it lives and the
