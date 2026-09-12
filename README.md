@@ -45,11 +45,20 @@ deliberately; **Clear** drops them all.
 One-time setup in the Google Cloud project behind Firebase:
 
 1. **APIs & Services → Library** → enable **Google Calendar API**.
-2. **APIs & Services → OAuth consent screen** → add your Google account under **Test users**.
+2. **Google Auth Platform → Audience** (this was "APIs & Services → OAuth consent screen" before
+   Google reorganised it). Check **Publishing status**: it must say **Testing** — if it says *In
+   production*, click **Back to testing**, because an unverified app in production is blocked
+   outright when it asks for a sensitive scope instead of showing a warning you can click past.
+   Then under **Test users** → **+ ADD USERS**, add the GM's Google account.
+
+Nothing needs adding under *Data Access*; scopes do not have to be registered while the app is
+in Testing.
 
 Calendar is a sensitive scope, so the first sync shows a "Google hasn't verified this app"
-screen — click through it. Only accounts you add as test users can grant the scope; players
-never see any of this, since the button is GM-only.
+screen — click **Advanced → Go to … (unsafe)**. The permissions screen that follows has a
+**checkbox** for calendar access that has to be ticked; without it Google returns a token
+without the scope and the board says so. Only accounts added as test users can grant it;
+players never see any of this, since the button is GM-only.
 
 Plain HTML, CSS and JavaScript — no build step. Hosted on GitHub Pages; live data via Firebase
 (Spark / free tier). Until Firebase is configured the page runs as a local demo on sample data.
