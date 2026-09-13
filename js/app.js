@@ -23,7 +23,7 @@
   let pendingConfirm = null;     // { key, at } — two-click confirmation for destructive actions
   const ui = { filter: 'all', party: new Set(), availTab: 'pattern', availWeek: null, overlapWeek: null, dispShowAll: false };
 
-  const KIND = { new: 'Posted', proposal: 'Proposed', scheduled: 'Scheduled', cancelled: 'Cancelled', lock: 'Roster', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', request: 'Request', note: 'Note' };
+  const KIND = { new: 'Posted', proposal: 'Proposed', scheduled: 'Scheduled', edited: 'Changed', cancelled: 'Cancelled', lock: 'Roster', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', request: 'Request', note: 'Note' };
   const fmtDay  = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
   const fmtDate = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
   const fmtLong = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -261,9 +261,13 @@
       : `<span class="label">Levels</span><strong>${esc(s.minLevel)}–${esc(s.maxLevel)}</strong>`;
     const count = prop ? `${party.length} joined` : `${party.length} of ${esc(s.seats)} seated${open ? ` · <strong>${open} open</strong>` : ''}`;
     const acts = [`<button type="button" class="watch" data-watch="${esc(s.id)}" aria-pressed="${isWatching(s.id)}" title="${prop ? 'Get a dispatch when this is scheduled' : 'Get a dispatch when a seat opens here'}">${isWatching(s.id) ? 'Watching' : 'Watch'}</button>`];
+    // Players get a no-auth "add to my calendar" link on expeditions they are seated on.
+    if (!prop && mine && !gm && KS.gcalTemplateUrl) {
+      acts.push(`<a class="session__cal" href="${esc(KS.gcalTemplateUrl(s))}" target="_blank" rel="noopener" title="Opens a pre-filled event in Google Calendar">+ Calendar</a>`);
+    }
     if (gm) acts.push(prop
       ? `<div class="session__gm"><button type="button" class="btn btn--sm btn--primary" data-action="schedule-open" data-sess="${esc(s.id)}">Schedule</button><button type="button" class="btn btn--sm btn--ghost" data-action="decline" data-sess="${esc(s.id)}">Decline</button></div>`
-      : `<div class="session__gm"><button type="button" class="btn btn--sm" data-action="toggle-lock" data-sess="${esc(s.id)}">${s.locked ? 'Unlock' : 'Lock roster'}</button><button type="button" class="btn btn--sm btn--ghost" data-action="cancel" data-sess="${esc(s.id)}">Cancel</button></div>`);
+      : `<div class="session__gm"><button type="button" class="btn btn--sm" data-action="edit-open" data-sess="${esc(s.id)}">Edit</button><button type="button" class="btn btn--sm" data-action="toggle-lock" data-sess="${esc(s.id)}">${s.locked ? 'Unlock' : 'Lock roster'}</button><button type="button" class="btn btn--sm btn--ghost" data-action="cancel" data-sess="${esc(s.id)}">Cancel</button></div>`);
     else if (isProposer) acts.push(`<div class="session__gm"><button type="button" class="btn btn--sm btn--ghost" data-action="withdraw-proposal" data-sess="${esc(s.id)}">Withdraw</button></div>`);
 
     return `<article class="session${prop ? ' session--proposal' : ''}${mine ? ' session--mine' : ''}${open === 0 ? ' session--full' : ''}" data-id="${esc(s.id)}">
@@ -467,6 +471,11 @@
       : { date: null, block: 'eve', seats: Math.max(4, party.length), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
     return Object.assign(base, { sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '', joined: party.length, hasWindow: hits.length > 0 });
   }
+  // Reopen a scheduled expedition in the same dialog to move or correct it.
+  function editPrefill(s) {
+    return { mode: 'edit', sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '',
+      date: s.date, block: s.block, seats: s.seats, minLevel: s.minLevel, maxLevel: s.maxLevel };
+  }
 
   function renderMeta() {
     let tz = 'local time';
@@ -601,8 +610,11 @@
   function cancelExpedition(id) {
     const s = byId(id); if (!s) return;
     confirmTwice('cancel:' + id, `Cancel “${s.title}” (${when(s)})? Everyone seated is released`, async () => {
-      try { await A.setStatus(id, 'cancelled'); toast('Cancelled.', 'ok'); await A.log('cancelled', `“${s.title}” — ${when(s)} — was cancelled by GM ${S.me.name}.`, { sessionId: id, date: s.date, block: s.block }); }
-      catch (err) { toast(err.message || 'Could not cancel.', 'no'); }
+      try {
+        await A.setStatus(id, 'cancelled'); toast('Cancelled.', 'ok');
+        await A.log('cancelled', `“${s.title}” — ${when(s)} — was cancelled by GM ${S.me.name}.`, { sessionId: id, date: s.date, block: s.block });
+        if (KS.gcalDropEvent) KS.gcalDropEvent(s);
+      } catch (err) { toast(err.message || 'Could not cancel.', 'no'); }
     });
   }
   function withdrawProposal(id) {
@@ -643,15 +655,18 @@
     const block = p.block || 'eve';
     $('#post-block').innerHTML = BLOCKS.map(b => `<option value="${b.key}"${b.key === block ? ' selected' : ''}>${b.label} · ${b.time}</option>`).join('');
     if (p.seats) { $('[name=seats]', f).value = p.seats; $('[name=minLevel]', f).value = p.minLevel; $('[name=maxLevel]', f).value = p.maxLevel; }
-    $('#post-h').textContent = p.sessionId ? 'Schedule the proposal' : 'Post an expedition';
-    $('#post-submit').textContent = p.sessionId ? 'Schedule it' : 'Post to the board';
-    const note = $('#post-note'); note.hidden = !p.sessionId;
-    if (p.sessionId) note.innerHTML = `Scheduling <strong>${esc(p.title)}</strong> — ${p.joined} joined. ${p.hasWindow ? 'The date below is the soonest one where they are all free and you can run' : 'No date in the next few weeks suits everyone joined, so pick one'}; seats and levels are set from the party.`;
+    const edit = p.mode === 'edit';
+    f.dataset.mode = edit ? 'edit' : '';
+    $('#post-h').textContent = edit ? 'Edit the expedition' : p.sessionId ? 'Schedule the proposal' : 'Post an expedition';
+    $('#post-submit').textContent = edit ? 'Save changes' : p.sessionId ? 'Schedule it' : 'Post to the board';
+    const note = $('#post-note'); note.hidden = !p.sessionId || edit;
+    if (p.sessionId && !edit) note.innerHTML = `Scheduling <strong>${esc(p.title)}</strong> — ${p.joined} joined. ${p.hasWindow ? 'The date below is the soonest one where they are all free and you can run' : 'No date in the next few weeks suits everyone joined, so pick one'}; seats and levels are set from the party.`;
     $('#post-dialog').showModal();
   }
   async function submitPost(e) {
     e.preventDefault();
-    const v = Object.fromEntries(new FormData(e.target).entries()), err = $('#post-error');
+    const f = e.target, v = Object.fromEntries(new FormData(f).entries()), err = $('#post-error');
+    v.mode = f.dataset.mode || '';
     const sessionId = v.sessionId || '', target = sessionId ? byId(sessionId) : null, party = target ? (target.party || []) : [];
     const s = { title: v.title.trim(), region: v.region.trim(), gm: v.gm.trim(), date: v.date, block: v.block,
       seats: +v.seats, minLevel: +v.minLevel, maxLevel: +v.maxLevel, notes: v.notes.trim() };
@@ -664,18 +679,23 @@
       : (lv.length && (s.minLevel > Math.min(...lv) || s.maxLevel < Math.max(...lv))) ? `The joined characters are levels ${Math.min(...lv)}–${Math.max(...lv)}; widen the band or take them off first.`
       : null;
     if (problem) { err.textContent = problem; err.hidden = false; return; }
+    const edit = v.mode === 'edit', moved = edit && target && (target.date !== s.date || target.block !== s.block);
     try {
+      let id = sessionId;
       if (sessionId) {
         await A.schedule(sessionId, s);
         $('#post-dialog').close();
-        toast(`“${s.title}” is scheduled.`, 'ok');
-        await A.log('scheduled', `“${s.title}” is scheduled — ${when(s)} (GM ${s.gm}). ${party.length} seated, ${Math.max(0, s.seats - party.length)} open.`, { sessionId, date: s.date, block: s.block });
+        toast(edit ? `“${s.title}” updated.` : `“${s.title}” is scheduled.`, 'ok');
+        if (edit) await A.log('edited', `“${s.title}” was changed by GM ${s.gm}${moved ? ` — now ${when(s)}` : ''}.`, { sessionId, date: s.date, block: s.block });
+        else await A.log('scheduled', `“${s.title}” is scheduled — ${when(s)} (GM ${s.gm}). ${party.length} seated, ${Math.max(0, s.seats - party.length)} open.`, { sessionId, date: s.date, block: s.block });
       } else {
-        const id = await A.postSession(s);
+        id = await A.postSession(s);
         $('#post-dialog').close();
         toast(`“${s.title}” is on the board.`, 'ok');
         await A.log('new', `New expedition posted: “${s.title}” — ${when(s)} (GM ${s.gm}).`, { sessionId: id, date: s.date, block: s.block });
       }
+      // The board has committed; the calendar write is a follow-on that never blocks it.
+      if (KS.gcalPushEvent) KS.gcalPushEvent(Object.assign({}, target || {}, s, { id, gmUid: S.me.uid }));
     } catch (ex) { err.textContent = ex.message || 'Could not post.'; err.hidden = false; }
   }
 
@@ -836,6 +856,7 @@
       case 'propose-open': openPropose(); break;
       case 'propose-close': $('#propose-dialog').close(); break;
       case 'schedule-open': { const s = byId(sess); if (s) openPost(schedulePrefill(s)); break; }
+      case 'edit-open': { const s = byId(sess); if (s) openPost(editPrefill(s)); break; }
       case 'decline': decline(sess); break;
       case 'cancel': cancelExpedition(sess); break;
       case 'withdraw-proposal': withdrawProposal(sess); break;

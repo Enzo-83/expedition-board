@@ -60,6 +60,7 @@ window.KS = window.KS || {};
     async setAvailability(a) { this.state.me.availability = a; this._emit(); }
     async setExceptions(ex) { this.state.me.exceptions = ex; this._emit(); }
     async setCalendarBusy(busy, syncedAt) { this.state.me.gcalBusy = busy || {}; this.state.me.gcalSyncedAt = syncedAt || null; this._emit(); }
+    async setCalendarEvent(sessId, eventId) { this._session(sessId).gcalEventId = eventId || null; this._emit(); }
     // No getCalendarToken here: the sample board has no Google session to borrow, and the
     // UI keys off its absence to say so rather than failing at the popup.
     async setWatching(w) { this.state.me.watching = w; this._emit(); }

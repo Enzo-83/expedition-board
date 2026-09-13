@@ -117,16 +117,17 @@ class FirebaseAdapter {
   // client can never resurrect an override the player already dropped.
   async setExceptions(ex) { await this.F.updateDoc(this._me(), { exceptions: ex || {} }); }
   async setCalendarBusy(busy, syncedAt) { await this.F.updateDoc(this._me(), { gcalBusy: busy || {}, gcalSyncedAt: syncedAt || null }); }
+  async setCalendarEvent(sessId, eventId) { await this.F.updateDoc(this._sess(sessId), { gcalEventId: eventId || null }); }
 
   // An OAuth access token for a Google API, obtained by re-consenting in a popup. Firebase
   // never stores or refreshes these, so it is cached in memory for the hour it lives and the
   // user re-consents after that. reauthenticateWithPopup keeps the session as it is;
   // signInWithPopup is the fallback when re-auth is refused.
-  async getCalendarToken(scope) {
-    const F = this.F, now = Date.now();
+  async getCalendarToken(scopes) {
+    const F = this.F, now = Date.now(), want = [].concat(scopes), scope = want.join(' ');
     if (this._tok && this._tok.scope === scope && this._tok.until > now + 60e3) return this._tok.token;
     const p = new F.GoogleAuthProvider();
-    p.addScope(scope);
+    want.forEach(s => p.addScope(s));
     p.setCustomParameters({ login_hint: (this.user && this.user.email) || '', prompt: 'consent' });
     let result;
     try { result = await F.reauthenticateWithPopup(this.auth.currentUser, p); }

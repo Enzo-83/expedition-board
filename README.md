@@ -30,6 +30,27 @@ Clicking a date cell flips that date's answer. If the new answer is what the lay
 already say, the override is dropped rather than stored, so overrides never pile up. Overrides
 for past dates are pruned on every write.
 
+### Expeditions in your calendar
+
+**GM.** Tick **Add expeditions I schedule to my calendar** in the Calendar panel. Posting or
+scheduling an expedition then creates an event in your primary calendar; **Edit** moves it;
+**Cancel** deletes it. The event id is kept on the session document, so the board can find its
+own event later. Ticking the box asks for a wider scope (`calendar.events` alongside
+`calendar.readonly`) rather than springing a consent popup on you mid-schedule.
+
+The board is the roster of record, so a calendar failure never undoes a scheduling — the
+expedition is posted either way and a toast says the calendar write did not land.
+
+**Players** get a **+ Calendar** link on expeditions they are seated on, which opens a
+pre-filled Google Calendar event page. No auth, no scopes, no setup — which is the point, since
+only the GM is an OAuth test user on the Cloud project.
+
+**The loop this would otherwise create:** the board writes "The Salt Stair, Thursday 18:00–22:00"
+into your calendar; the next sync reads it back through `freeBusy` and blocks the Thursday
+evening you are running it in. `freeBusy` returns no event ids, so the sync cannot recognise its
+own event — but it does not need to. **A window you are running a scheduled expedition in is
+never blocked by a sync**, whatever put the busy time there.
+
 ### Google Calendar sync (GM)
 
 The *Specific dates* tab shows a **Sync from Google Calendar** button for GM accounts. It reads
@@ -147,7 +168,7 @@ so two players racing for the last seat cannot both get it.
 
 - `players/{uid}` — `name, handle, discord, role, characters[{id,name,class,level}], availability["mon-eve", …], exceptions{"2026-09-17-eve": false}, gcalBusy["2026-09-17-eve", …], gcalSyncedAt, watching[sessionId], prefs, readAt`
 - `sessions/{id}` — `status (proposed|scheduled|cancelled), title, region, notes, party[{charId, uid, name, level, owner}], locked, postedAt`;
-  proposals add `proposerUid, proposer`; scheduled ones add `gm, gmUid, date "YYYY-MM-DD", block, seats, minLevel, maxLevel`
+  proposals add `proposerUid, proposer`; scheduled ones add `gm, gmUid, date "YYYY-MM-DD", block, seats, minLevel, maxLevel`, and `gcalEventId` once the GM's calendar holds it
 - `dispatches/{id}` — `ts, kind (proposal|new|scheduled|cancelled|lock|seat|open|full|avail|request|note), text, uid, sessionId?, date?, block?, party?[uid]`
 - `allowlist/{email}` — presence admits the account; `gm: true` makes it a GM
 - `config/board` — `gmUids[]`, written by GMs on sign-in so every client can dim the grid outside their windows
