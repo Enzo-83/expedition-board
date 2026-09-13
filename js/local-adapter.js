@@ -13,6 +13,7 @@
      setStatus(id, status)  setLocked(id, bool)       GM (proposer may cancel their own proposal)
      gmUnseat(id, charId, uid)                        GM: remove anyone from a roster
      seat(sessId, character)  unseat(sessId, charId)  move(fromId, toId, charId)   (throw Error(reason) to refuse)
+     postAnnouncement({text, until})  removeAnnouncement(id)       GM notices for the top banner
      log(kind, text, meta)      writes one dispatch (the feed is append-only)
      reset()                    local only
 
@@ -24,7 +25,7 @@ window.KS = window.KS || {};
   class LocalAdapter {
     constructor(opts) {
       this.opts = opts || {};
-      this.key = 'kresthalis-expedition-board:v3' + (this.opts.gm ? ':gm' : '');
+      this.key = 'kresthalis-expedition-board:v5' + (this.opts.gm ? ':gm' : '');
       this.state = null; this.onState = null;
     }
 
@@ -37,7 +38,7 @@ window.KS = window.KS || {};
     _load() {
       try {
         const raw = localStorage.getItem(this.key);
-        if (raw) { const s = JSON.parse(raw); if (s && s.version === 3) return s; }
+        if (raw) { const s = JSON.parse(raw); if (s && s.version === 5) return s; }
       } catch (e) { /* private mode, blocked storage — fall through to sample */ }
       return KS.sample(this.opts);
     }
@@ -117,6 +118,15 @@ window.KS = window.KS || {};
       if (!v.ok) throw new Error(v.reason);
       from.party = from.party.filter(e => e !== entry);
       to.party.push(this._entryFor(ch));
+      this._emit();
+    }
+    async postAnnouncement(a) {
+      const me = this.state.me;
+      this.state.announcements.unshift({ id: 'a' + KS.util.uid(), text: a.text, until: a.until, ts: Date.now(), uid: me.uid, author: me.name });
+      this._emit();
+    }
+    async removeAnnouncement(id) {
+      this.state.announcements = this.state.announcements.filter(a => a.id !== id);
       this._emit();
     }
     async log(kind, text, meta = {}) {

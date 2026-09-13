@@ -93,6 +93,34 @@ strong { font-weight: 600; }
   padding: 10px var(--gutter); font-weight: 500;
 }
 .arm-banner button { border: 1px solid var(--on-crimson); padding: 4px 10px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+/* GM notices: one line under the masthead, stepping between entries. Never taller than a line,
+   so it costs the board almost nothing, and it is absent entirely when there is nothing to say. */
+.announce {
+  display: flex; align-items: baseline; gap: 12px;
+  max-width: var(--max); margin: 0 auto; padding: 9px var(--gutter);
+  border-bottom: 1px solid var(--rule); background: var(--paper-2);
+  font-size: 13px;
+}
+.announce__label { font-size: 9.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--crimson); white-space: nowrap; }
+.announce__text { flex: 1; min-width: 0; color: var(--ink); }
+.announce__text.is-stepping { animation: announce-in .28s ease-out; }
+.announce__who { color: var(--ink-3); font-style: italic; }
+.announce__all { flex: 1; display: grid; gap: 3px; }
+.announce__dots { display: flex; gap: 5px; align-items: center; }
+.announce__dots button { width: 7px; height: 7px; border: 1px solid var(--ink-3); }
+.announce__dots button[aria-current=true] { background: var(--crimson); border-color: var(--crimson); }
+.announce__edit { font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--hair); white-space: nowrap; }
+.announce__edit:hover { color: var(--crimson); border-color: var(--crimson); }
+@keyframes announce-in { from { opacity: 0; transform: translateY(3px); } }
+.announce__hint { grid-column: 1 / -1; margin-top: -4px; }
+.announce__manage { padding: 0 18px 18px; }
+.announce__manage ul { margin-top: 6px; border: 1px solid var(--hair); }
+.announce__manage li { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; padding: 7px 9px; border-bottom: 1px solid var(--hair); font-size: 12.5px; }
+.announce__manage li:last-child { border-bottom: 0; }
+.announce__manage li span { flex: 1; }
+.announce__manage li small { display: block; color: var(--ink-3); margin-top: 1px; }
+.announce__manage .empty-line { padding: 8px 9px; color: var(--ink-3); font-size: 12.5px; }
+
 .boot-error { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; background: var(--ink); color: var(--paper-2); padding: 10px var(--gutter); font-size: 13px; }
 .boot-error button { border: 1px solid var(--paper-2); padding: 4px 10px; font-size: 12px; }
 

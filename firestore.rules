@@ -66,6 +66,14 @@ service cloud.firestore {
       allow delete: if isGM();
     }
 
+    // GM notices for the banner at the top of the board. Everyone reads them; only a GM writes
+    // one, edits it, or takes it down.
+    match /announcements/{id} {
+      allow read: if allowed();
+      allow create: if isGM() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isGM();
+    }
+
     // The feed is append-only and every entry is signed by its author. Editing was only ever
     // needed to coalesce availability lines, and those are no longer written at all.
     match /dispatches/{id} {

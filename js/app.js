@@ -20,6 +20,7 @@
   let dragging = null;           // { kind: 'char' | 'chip', charId, sessId }
   let seenDispatches = null;     // ids already seen — new ones may raise a browser alert
   let toastTimer = null, profileOpenedOnce = false, resetArmedAt = 0;
+  let announceIdx = 0, announceTimer = null, announcePaused = false, announceStepped = false;
   let pendingConfirm = null;     // { key, at } — two-click confirmation for destructive actions
   const ui = { filter: 'all', party: new Set(), availTab: 'pattern', availWeek: null, overlapWeek: null, dispShowAll: false };
 
@@ -65,7 +66,7 @@
     document.body.classList.toggle('is-gm', isGM());
     const a = document.activeElement, d = a && a.dataset;
     const keep = d ? (d.slot ? `[data-slot="${d.slot}"]` : d.ex ? `[data-ex="${d.ex}"]` : d.filter ? `[data-filter="${d.filter}"]` : d.watch ? `[data-watch="${d.watch}"]` : d.char ? `[data-char="${d.char}"]` : null) : null;
-    renderUser(); renderRoster(); renderAvailability(); renderBoard(); renderDispatches(); renderOverlap(); renderMeta(); renderArm();
+    renderUser(); renderRoster(); renderAvailability(); renderBoard(); renderAnnounce(); renderDispatches(); renderOverlap(); renderMeta(); renderArm();
     if (KS.renderGcal) KS.renderGcal();
     if (keep) { const el = $(keep); if (el) el.focus({ preventScroll: true }); }
   }
@@ -297,6 +298,88 @@
       return `<div class="empty"><h4>${propsN ? 'Nothing scheduled yet' : 'Nothing on the board'}</h4><p>${lead}${status.mode === 'local' ? ' The sample dates may have passed — <button type="button" class="linklike" data-action="reset">reset the sample data</button>.' : ''}</p></div>`;
     }
     return `<div class="empty"><h4>Nothing fits those filters</h4><p>Try widening your availability, or show all expeditions.</p></div>`;
+  }
+
+  // ---- GM announcements ---------------------------------------------------
+  // One line under the masthead. With several it steps between them; with reduced motion it
+  // lists them instead of moving. Hover pauses. Gone entirely when there is nothing to show.
+  const liveAnnouncements = () => {
+    const today = U.todayKey();
+    return (S.announcements || []).filter(a => a && a.text && (!a.until || a.until >= today));
+  };
+  const reduceMotion = () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  function renderAnnounce() {
+    const el = $('#announce'), list = liveAnnouncements();
+    if (!list.length) { el.hidden = true; el.innerHTML = ''; stopAnnounce(); return; }
+    el.hidden = false;
+    if (announceIdx >= list.length) announceIdx = 0;
+    const gmEdit = isGM() ? '<button type="button" class="announce__edit" data-action="announce-open">Manage</button>' : '';
+    if (reduceMotion()) {
+      el.innerHTML = `<span class="announce__label">${list.length > 1 ? `${list.length} notices` : 'Notice'}</span>`
+        + `<div class="announce__all">${list.map(a => `<p>${esc(a.text)} <span class="announce__who">— ${esc(a.author || 'GM')}</span></p>`).join('')}</div>${gmEdit}`;
+      stopAnnounce();
+      return;
+    }
+    const a = list[announceIdx];
+    const dots = list.length > 1
+      ? `<span class="announce__dots">${list.map((_, i) => `<button type="button" data-announce-go="${i}" aria-current="${i === announceIdx}" aria-label="Notice ${i + 1} of ${list.length}"></button>`).join('')}</span>`
+      : '';
+    el.innerHTML = `<span class="announce__label">Notice</span>`
+      + `<p class="announce__text${announceStepped ? ' is-stepping' : ''}">${esc(a.text)} <span class="announce__who">— ${esc(a.author || 'GM')}</span></p>`
+      + dots + gmEdit;
+    announceStepped = false;
+    if (list.length > 1) startAnnounce(); else stopAnnounce();
+  }
+  function startAnnounce() {
+    stopAnnounce();
+    announceTimer = setInterval(() => {
+      if (announcePaused) return;
+      const list = liveAnnouncements();
+      if (list.length < 2) return stopAnnounce();
+      announceIdx = (announceIdx + 1) % list.length;
+      announceStepped = true;
+      renderAnnounce();
+    }, 6000);
+  }
+  function stopAnnounce() { if (announceTimer) { clearInterval(announceTimer); announceTimer = null; } }
+
+  function openAnnounce() {
+    const f = $('#announce-form');
+    f.reset(); $('#announce-error').hidden = true;
+    $('[name=until]', f).min = U.todayKey();
+    renderAnnounceList();
+    $('#announce-dialog').showModal();
+  }
+  function renderAnnounceList() {
+    const today = U.todayKey();
+    $('#announce-list').innerHTML = (S.announcements || []).map(a => {
+      const gone = a.until && a.until < today;
+      return `<li><span>${esc(a.text)}<small>${esc(a.author || 'GM')} · ${gone ? 'expired' : a.until ? `until ${fmtDate.format(U.parseKey(a.until))}` : 'no end date'}</small></span>
+        <button type="button" class="char-row__x" data-action="announce-remove" data-ann="${esc(a.id)}" aria-label="Take this announcement down">×</button></li>`;
+    }).join('') || '<li class="empty-line">Nothing posted.</li>';
+  }
+  async function submitAnnounce(e) {
+    e.preventDefault();
+    const f = e.target, err = $('#announce-error');
+    const text = $('[name=text]', f).value.trim();
+    let until = $('[name=until]', f).value;
+    if (!text) { err.textContent = 'Write the announcement first.'; err.hidden = false; return; }
+    if (until && until < U.todayKey()) { err.textContent = 'That date has already passed.'; err.hidden = false; return; }
+    if (!until) until = U.addDays(U.todayKey(), 14);        // two weeks unless told otherwise
+    try {
+      await A.postAnnouncement({ text, until });
+      f.reset(); err.hidden = true;
+      announceIdx = 0;
+      toast('Posted to the top of the board.', 'ok');
+      renderAnnounceList();
+    } catch (ex) { err.textContent = ex.message || 'Could not post it.'; err.hidden = false; }
+  }
+  function removeAnnounce(id) {
+    confirmTwice('ann:' + id, 'Take that announcement down?', async () => {
+      try { await A.removeAnnouncement(id); toast('Taken down.', 'ok'); renderAnnounceList(); }
+      catch (err) { toast(err.message || 'Could not remove it.', 'no'); }
+    });
   }
 
   function renderDispatches() {
@@ -815,11 +898,12 @@
 
   // ----------------------------------------------------------------- events
   document.addEventListener('click', e => {
-    const t = e.target.closest('[data-action],[data-gmremove],[data-char],[data-chip],[data-open],[data-drop],[data-watch],[data-slot],[data-ex],[data-preset],[data-filter],[data-pchip],[data-avtab],[data-week]');
+    const t = e.target.closest('[data-action],[data-gmremove],[data-char],[data-chip],[data-open],[data-drop],[data-watch],[data-slot],[data-ex],[data-preset],[data-filter],[data-pchip],[data-avtab],[data-week],[data-announce-go]');
     if (!t) return;
     const d = t.dataset;
     if (d.action) return doAction(d.action, t);
     if (!S) return;
+    if (d.announceGo !== undefined) { announceIdx = +d.announceGo; announceStepped = true; renderAnnounce(); startAnnounce(); return; }
     if (d.avtab !== undefined) { ui.availTab = d.avtab; renderAvailability(); renderUser(); return; }
     if (d.week !== undefined) {
       const [which, dir] = d.week.split(':');
@@ -866,6 +950,9 @@
       case 'char-add': $('#char-rows').insertAdjacentHTML('beforeend', charRow({})); $('#char-rows .char-row:last-child input').focus(); break;
       case 'char-remove': el.closest('.char-row').remove(); break;
       case 'arm-cancel': disarm(); break;
+      case 'announce-open': openAnnounce(); break;
+      case 'announce-close': $('#announce-dialog').close(); break;
+      case 'announce-remove': removeAnnounce(el.dataset.ann); break;
       case 'clear-exceptions': clearExceptions(); break;
       case 'party-clear': ui.party.clear(); renderOverlap(); break;
       case 'party-request': partyRequest(el.dataset.date, el.dataset.block); break;
@@ -885,6 +972,12 @@
     }
   }
 
+  // The banner element persists across renders, so these bind once.
+  $('#announce').addEventListener('mouseenter', () => { announcePaused = true; });
+  $('#announce').addEventListener('mouseleave', () => { announcePaused = false; });
+  $('#announce').addEventListener('focusin', () => { announcePaused = true; });
+  $('#announce').addEventListener('focusout', () => { announcePaused = false; });
+  $('#announce-form').addEventListener('submit', submitAnnounce);
   $('#post-form').addEventListener('submit', submitPost);
   $('#propose-form').addEventListener('submit', submitPropose);
   $('#profile-form').addEventListener('submit', submitProfile);

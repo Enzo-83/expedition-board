@@ -29,8 +29,8 @@ class FirebaseAdapter {
     this._blank();
   }
   _blank() {
-    this.state = { me: null, players: [], gmUids: [], sessions: [], dispatches: [] };
-    this.ready = { players: false, sessions: false, dispatches: false, config: false };
+    this.state = { me: null, players: [], gmUids: [], sessions: [], dispatches: [], announcements: [] };
+    this.ready = { players: false, sessions: false, dispatches: false, config: false, announcements: false };
   }
 
   start({ onState, onStatus }) {
@@ -81,6 +81,10 @@ class FirebaseAdapter {
       this.state.dispatches = qs.docs.map(d => Object.assign({ id: d.id }, d.data()));
       this.ready.dispatches = true; this._emit();
     }, fail));
+    this.unsubs.push(F.onSnapshot(F.query(F.collection(this.db, 'announcements'), F.orderBy('ts', 'desc'), F.limit(20)), qs => {
+      this.state.announcements = qs.docs.map(d => Object.assign({ id: d.id }, d.data()));
+      this.ready.announcements = true; this._emit();
+    }, fail));
     this.unsubs.push(F.onSnapshot(F.doc(this.db, 'config', 'board'), d => {
       this.state.gmUids = (d.exists() && d.data().gmUids) || [];
       this.ready.config = true; this._emit();
@@ -91,7 +95,7 @@ class FirebaseAdapter {
   // Render only once every subscription has arrived, so the first paint is whole.
   _emit() {
     const r = this.ready;
-    if (this.state.me && r.players && r.sessions && r.dispatches && r.config) this.onState(this.state);
+    if (this.state.me && r.players && r.sessions && r.dispatches && r.config && r.announcements) this.onState(this.state);
   }
   _stop() { this.unsubs.forEach(u => { try { u(); } catch (e) { /* ignore */ } }); this.unsubs = []; }
   _me() { return this.F.doc(this.db, 'players', this.user.uid); }
@@ -210,6 +214,12 @@ class FirebaseAdapter {
       tx.update(toRef, { party: [...(to.party || []), this._entryFor(ch)] });
     });
   }
+
+  async postAnnouncement(a) {
+    await this.F.addDoc(this.F.collection(this.db, 'announcements'),
+      clean({ text: a.text, until: a.until, ts: Date.now(), uid: this.user.uid, author: this.state.me.name }));
+  }
+  async removeAnnouncement(id) { await this.F.deleteDoc(this.F.doc(this.db, 'announcements', id)); }
 
   async log(kind, text, meta = {}) {
     await this.F.addDoc(this.F.collection(this.db, 'dispatches'), clean(Object.assign({ ts: Date.now(), kind, text, uid: this.user.uid }, meta)));

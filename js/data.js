@@ -233,6 +233,11 @@ window.KS = window.KS || {};
       D('d6', 70, 'new',      'New expedition posted: “The Salt Stair” (GM Dahl).', { uid: dahl.gmUid, sessionId: 's1', date: s('s1').date, block: 'eve' }),
     ].filter(d => asGM ? d.id !== 'd5' : true);
 
-    return { version: 4, me, players, gmUids, sessions, dispatches };
+    const day = n => U.keyOf(new Date(today.getTime() + n * 864e5));
+    const announcements = [
+      { id: 'an1', text: 'No game the week of the 28th — I am away. Back the week after.', until: day(16), ts: now - 4 * H, uid: gmUids[0] || 'gm-dahl', author: asGM ? me.name : 'Dahl' },
+      { id: 'an2', text: 'New players: read the primer before your first expedition, and bring a level 1 character.', until: day(30), ts: now - 30 * H, uid: 'gm-imre', author: 'Imre' },
+    ];
+    return { version: 5, me, players, gmUids, sessions, dispatches, announcements };
   };
 })(window.KS);

@@ -17,6 +17,24 @@ overlap grid runs over real dates a week at a time, dims everything no GM can ru
 **party picker** narrows it to a chosen set of characters — ringed cells are dates where all of
 their players are free, with one click to request an expedition there or (for a GM) post one.
 
+## Announcements
+
+A GM-written notice strip sits directly under the masthead — one line on a desktop, wrapping on
+a phone — and is absent entirely when there is nothing to say. Post one from **Post an
+announcement** in the GM panel, or **Manage** on the strip itself.
+
+With more than one notice it holds each for six seconds and steps to the next; hovering or
+focusing it pauses, and the dots jump straight to one. Under `prefers-reduced-motion` it does not
+move at all — it lists every notice instead.
+
+Announcements carry an optional **show until** date and default to two weeks, because a stale
+notice at the top of the page is worse than no notice. Players cannot dismiss them: if it is
+worth the top of the board, it stays until it expires or the GM takes it down. They live in
+`announcements/{id}` — readable by the network, writable only by a GM.
+
+This is deliberately not the dispatch feed. Dispatches is an automatic log of what happened;
+announcements are what a person wants said.
+
 ## Availability
 
 Availability resolves in three layers, most specific first:
@@ -170,6 +188,7 @@ so two players racing for the last seat cannot both get it.
 - `sessions/{id}` — `status (proposed|scheduled|cancelled), title, region, notes, party[{charId, uid, name, level, owner}], locked, postedAt`;
   proposals add `proposerUid, proposer`; scheduled ones add `gm, gmUid, date "YYYY-MM-DD", block, seats, minLevel, maxLevel`, and `gcalEventId` once the GM's calendar holds it
 - `dispatches/{id}` — `ts, kind (proposal|new|scheduled|cancelled|lock|seat|open|full|avail|request|note), text, uid, sessionId?, date?, block?, party?[uid]`
+- `announcements/{id}` — `text, until "YYYY-MM-DD", ts, uid, author`; GM-only write
 - `allowlist/{email}` — presence admits the account; `gm: true` makes it a GM
 - `config/board` — `gmUids[]`, written by GMs on sign-in so every client can dim the grid outside their windows
 

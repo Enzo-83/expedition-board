@@ -34,6 +34,8 @@
   </div>
 </header>
 
+<div id="announce" class="announce" hidden aria-live="polite"></div>
+
 <div id="arm-banner" class="arm-banner" hidden>
   <span>Placing <strong id="arm-name"></strong> — tap an open seat on the board</span>
   <button type="button" data-action="arm-cancel">Cancel</button>
@@ -69,6 +71,7 @@
       <div class="gm-note gm-only">
         <p>You run the table. Players propose expeditions and join them; you schedule the ones you will run, post your own, and keep the rosters honest.</p>
         <p class="gm-note__stat"><strong id="gm-proposals">0</strong><span>waiting for a GM</span></p>
+        <button type="button" class="btn btn--sm" data-action="announce-open">Post an announcement</button>
       </div>
       <div class="panel__sub player-only">
         <span class="label">Active roster</span>
@@ -277,6 +280,28 @@
       <button type="submit" class="btn btn--primary">Save</button>
     </div>
   </form>
+</dialog>
+
+<!-- ===== Announcements (GM) ===== -->
+<dialog id="announce-dialog" aria-labelledby="announce-h">
+  <div class="dialog__head">
+    <h2 id="announce-h">Announcements</h2>
+    <span class="label">GM tools</span>
+  </div>
+  <form id="announce-form" class="form" novalidate>
+    <label class="field full"><span>Announcement</span><textarea name="text" rows="2" maxlength="200" placeholder="No game the week of the 28th — I'm away. Back the week after."></textarea></label>
+    <label class="field"><span>Show until</span><input name="until" type="date"></label>
+    <p class="hint hint--inline announce__hint">Leave the date blank and it comes down after two weeks. It sits at the top of the board for everyone until then.</p>
+    <p class="form__error full" id="announce-error" role="alert" hidden></p>
+    <div class="form__actions">
+      <button type="button" class="btn btn--ghost" data-action="announce-close">Close</button>
+      <button type="submit" class="btn btn--primary">Post it</button>
+    </div>
+  </form>
+  <div class="announce__manage">
+    <span class="label">Showing now</span>
+    <ul id="announce-list"></ul>
+  </div>
 </dialog>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
