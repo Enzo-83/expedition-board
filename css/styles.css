@@ -498,3 +498,7 @@ a.paper__cover:hover, a.paper__cover:focus-visible { outline: 2px solid var(--cr
   .layout { grid-template-areas: "user" "paper" "board" "avail"; }
   .paper__cover { aspect-ratio: 16 / 9; }
 }
+
+/* ---------- requests in Dispatches: Post this (GM) ---------- */
+.disp__act { justify-self: start; margin-top: 6px; }
+.disp__done { display: block; margin-top: 6px; font: 600 11px/1.3 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2, #4a443c); }

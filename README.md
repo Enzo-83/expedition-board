@@ -38,6 +38,15 @@ announcements are what a person wants said.
 A notice may carry one **in-page link** (`link: '#paper'`, with a `linkLabel`). Only anchors on this
 board are rendered; a notice can never link off-site.
 
+## Requests become expeditions
+
+A player's **Request an expedition** (from the party picker) is a line in Dispatches, not an entry on
+the board. A GM sees **Post this** on each request: it opens *Post an expedition* already filled
+with the request's date and window, a seat count and the party's level band, and a note quoting the
+request. The posted expedition records `fromRequest`, and the request line then reads **Posted**
+with its title — dispatches are append-only, so the answer lives on the expedition, not the line.
+A request whose date has passed opens on tomorrow instead, and the note says to pick another date.
+
 ## The Broadsheet
 
 *The Quill, Claw & Kaboodle*, the campaign's in-world paper, sits at the top of the right-hand rail,

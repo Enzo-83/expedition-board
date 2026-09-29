@@ -224,6 +224,7 @@ window.KS = window.KS || {};
 
     const D = (id, hoursAgo, kind, text, meta) => Object.assign({ id, ts: now - hoursAgo * H, kind, text }, meta);
     const dispatches = [
+      D('d8', 3,  'request',  `Ola, Halvard and Priya can make ${next(3)} Evening — and would like an expedition.`, { uid: 'p-ola', date: next(3), block: 'eve', party: ['p-ola', 'p-halvard', 'p-priya'], minLevel: 1, maxLevel: 3 }),
       D('d1', 2,  'new',      'New expedition posted: “Shadow-Prowler (NE) — The Quiet Mile” (GM Imre).', { uid: 'gm-imre', sessionId: 's8', date: s('s8').date, block: 'eve' }),
       D('d2', 5,  'open',     'Gaius (Halvard) withdrew from “The Salt Stair” — 1 seat opened.', { uid: 'p-halvard', sessionId: 's1', date: s('s1').date, block: 'eve' }),
       D('d0', 6,  'proposal', 'Ola proposed “Farmbelt Spoke (W) — the empty waystation” — Farmbelt Spoke (W). Join it from the board.', { uid: 'p-ola', sessionId: 'p2' }),

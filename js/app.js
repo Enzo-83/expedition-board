@@ -490,9 +490,15 @@
     $('#disp-toggle').hidden = !ui.dispShowAll && !S.dispatches.length;
     $('#dispatches').innerHTML = list.map(d => {
       const forMe = d.uid !== S.me.uid && concernsMe(d);
+      let act = '';
+      if (d.kind === 'request' && isGM()) {
+        const answered = S.sessions.find(s => s.fromRequest === d.id && R.isLive(s));
+        act = answered ? `<span class="disp__done">Posted · ${esc(answered.title)}</span>`
+          : `<button type="button" class="btn btn--sm disp__act" data-action="request-post" data-disp="${esc(d.id)}">Post this</button>`;
+      }
       return `<li class="disp disp--${esc(d.kind)}${d.ts > readAt ? ' disp--unread' : ''}${forMe ? ' disp--forme' : ''}">
         <span class="disp__meta"><span class="disp__kind">${forMe ? 'For you · ' : ''}${esc(KIND[d.kind] || d.kind)}</span><time class="disp__time" datetime="${new Date(d.ts).toISOString()}">${esc(relTime(d.ts))}</time></span>
-        <span class="disp__text">${esc(d.text)}</span></li>`;
+        <span class="disp__text">${esc(d.text)}</span>${act}</li>`;
     }).join('') || (ui.dispShowAll
       ? '<li class="disp disp--empty">Nothing yet.</li>'
       : `<li class="disp disp--empty">Nothing new.${S.dispatches.length ? ' <button type="button" class="linklike" data-action="disp-toggle">Show all</button>' : ''}</li>`);
@@ -637,11 +643,22 @@
     const here = group.filter(p => R.freeOn(p, date, block)), away = group.filter(p => !R.freeOn(p, date, block));
     const levels = chars.map(c => c.level), band = levels.length ? ` (levels ${Math.min(...levels)}–${Math.max(...levels)})` : '';
     const text = `${listNames(here.map(p => p.name))} can make ${stampLabel(date, block)}${away.length ? ` — ${listNames(away.map(p => p.name))} can't` : ''}${band} — and would like an expedition.`;
-    try { await A.log('request', text, { date, block, party: group.map(p => p.uid) }); toast('Request posted — the GM will see it in Dispatches.', 'ok'); }
+    const meta = Object.assign({ date, block, party: group.map(p => p.uid) }, levels.length ? { minLevel: Math.min(...levels), maxLevel: Math.max(...levels) } : {});
+    try { await A.log('request', text, meta); toast('Request posted — the GM will see it in Dispatches.', 'ok'); }
     catch (err) { toast(err.message || 'Could not post the request.', 'no'); }
   }
   function prefillFor(date, block, levels, count) {
     return { date, block, seats: Math.max(4, count), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
+  }
+  // "Post this" on a request in Dispatches. Requests written before the level band was stored
+  // fall back to every character the requesting players own.
+  function requestPrefill(d) {
+    const party = d.party || [], players = (S.players || []).filter(p => party.includes(p.uid));
+    const levels = (d.minLevel != null && d.maxLevel != null) ? [d.minLevel, d.maxLevel]
+      : players.flatMap(p => (p.characters || []).map(c => +c.level).filter(n => n > 0));
+    const past = !d.date || d.date < U.todayKey();
+    return Object.assign(prefillFor(past ? null : d.date, d.block || 'eve', levels, party.length),
+      { fromRequest: d.id, requestText: d.text || '', requestPast: past });
   }
   function partyPrefill(date, block) {
     const { chars } = partyGroup(playersOnly());
@@ -828,6 +845,7 @@
     const f = $('#post-form'), p = prefill || {};
     f.reset(); $('#post-error').hidden = true;
     $('[name=sessionId]', f).value = p.sessionId || '';
+    $('[name=fromRequest]', f).value = p.fromRequest || '';
     $('[name=title]', f).value = p.title || '';
     $('[name=region]', f).value = p.region || '';
     $('[name=notes]', f).value = p.notes || '';
@@ -841,8 +859,9 @@
     f.dataset.mode = edit ? 'edit' : '';
     $('#post-h').textContent = edit ? 'Edit the expedition' : p.sessionId ? 'Schedule the proposal' : 'Post an expedition';
     $('#post-submit').textContent = edit ? 'Save changes' : p.sessionId ? 'Schedule it' : 'Post to the board';
-    const note = $('#post-note'); note.hidden = !p.sessionId || edit;
-    if (p.sessionId && !edit) note.innerHTML = `Scheduling <strong>${esc(p.title)}</strong> — ${p.joined} joined. ${p.hasWindow ? 'The date below is the soonest one where they are all free and you can run' : 'No date in the next few weeks suits everyone joined, so pick one'}; seats and levels are set from the party.`;
+    const note = $('#post-note'); note.hidden = !(p.sessionId || p.fromRequest) || edit;
+    if (p.fromRequest && !edit) note.innerHTML = `Answering a request: <em>${esc(p.requestText)}</em> ${p.requestPast ? 'That date has passed, so pick another.' : 'Date, window, seats and levels are set from it.'}`;
+    else if (p.sessionId && !edit) note.innerHTML = `Scheduling <strong>${esc(p.title)}</strong> — ${p.joined} joined. ${p.hasWindow ? 'The date below is the soonest one where they are all free and you can run' : 'No date in the next few weeks suits everyone joined, so pick one'}; seats and levels are set from the party.`;
     $('#post-dialog').showModal();
   }
   async function submitPost(e) {
@@ -871,10 +890,12 @@
         if (edit) await A.log('edited', `“${s.title}” was changed by GM ${s.gm}${moved ? ` — now ${when(s)}` : ''}.`, { sessionId, date: s.date, block: s.block });
         else await A.log('scheduled', `“${s.title}” is scheduled — ${when(s)} (GM ${s.gm}). ${party.length} seated, ${Math.max(0, s.seats - party.length)} open.`, { sessionId, date: s.date, block: s.block });
       } else {
-        id = await A.postSession(s);
+        const fromRequest = v.fromRequest || '';
+        id = await A.postSession(fromRequest ? Object.assign({}, s, { fromRequest }) : s);
         $('#post-dialog').close();
         toast(`“${s.title}” is on the board.`, 'ok');
-        await A.log('new', `New expedition posted: “${s.title}” — ${when(s)} (GM ${s.gm}).`, { sessionId: id, date: s.date, block: s.block });
+        await A.log('new', `New expedition posted: “${s.title}” — ${when(s)} (GM ${s.gm})${fromRequest ? ', answering a request' : ''}.`,
+          Object.assign({ sessionId: id, date: s.date, block: s.block }, fromRequest ? { requestId: fromRequest } : {}));
       }
       // The board has committed; the calendar write is a follow-on that never blocks it.
       if (KS.gcalPushEvent) KS.gcalPushEvent(Object.assign({}, target || {}, s, { id, gmUid: S.me.uid }));
@@ -1059,6 +1080,7 @@
       case 'party-clear': ui.party.clear(); renderOverlap(); break;
       case 'party-request': partyRequest(el.dataset.date, el.dataset.block); break;
       case 'party-post': openPost(partyPrefill(el.dataset.date, el.dataset.block)); break;
+      case 'request-post': { const d = S.dispatches.find(x => x.id === el.dataset.disp); if (d) openPost(requestPrefill(d)); break; }
       case 'mark-read': A.markRead(); break;
       case 'disp-toggle': ui.dispShowAll = !ui.dispShowAll; renderDispatches(); break;
       case 'browser-alerts': toggleBrowserAlerts(); break;
