@@ -238,6 +238,12 @@ window.KS = window.KS || {};
       { id: 'an1', text: 'No game the week of the 28th — I am away. Back the week after.', until: day(16), ts: now - 4 * H, uid: gmUids[0] || 'gm-dahl', author: asGM ? me.name : 'Dahl' },
       { id: 'an2', text: 'New players: read the primer before your first expedition, and bring a level 1 character.', until: day(30), ts: now - 30 * H, uid: 'gm-imre', author: 'Imre' },
     ];
-    return { version: 5, me, players, gmUids, sessions, dispatches, announcements };
+    // The Broadsheet, as sample: placeholder headlines and no file links. The repo is public, so
+    // the live issues' Forge links and text never belong here.
+    const issues = [
+      { id: 'i1', no: 1, date: 'Lore Day, 24 Returnwater, Year 149', heads: ['A sample lead headline', 'A second story, sample', 'A third, also sample'],
+        pdf: null, cover: null, ts: now - 26 * H, uid: gmUids[0] || 'gm-dahl', author: asGM ? me.name : 'Dahl' },
+    ];
+    return { version: 5, me, players, gmUids, sessions, dispatches, announcements, issues };
   };
 })(window.KS);

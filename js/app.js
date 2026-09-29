@@ -22,9 +22,9 @@
   let toastTimer = null, profileOpenedOnce = false, resetArmedAt = 0;
   let announceIdx = 0, announceTimer = null, announcePaused = false, announceStepped = false;
   let pendingConfirm = null;     // { key, at } — two-click confirmation for destructive actions
-  const ui = { filter: 'all', party: new Set(), availTab: 'pattern', availWeek: null, overlapWeek: null, dispShowAll: false };
+  const ui = { filter: 'all', party: new Set(), availTab: 'pattern', availWeek: null, overlapWeek: null, dispShowAll: false, paperBack: false };
 
-  const KIND = { new: 'Posted', proposal: 'Proposed', scheduled: 'Scheduled', edited: 'Changed', cancelled: 'Cancelled', lock: 'Roster', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', request: 'Request', note: 'Note' };
+  const KIND = { new: 'Posted', proposal: 'Proposed', scheduled: 'Scheduled', edited: 'Changed', cancelled: 'Cancelled', lock: 'Roster', seat: 'Seated', open: 'Seat open', full: 'Full', avail: 'Availability', watch: 'Watching', alert: 'Alert', request: 'Request', note: 'Note', paper: 'Broadsheet' };
   const fmtDay  = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
   const fmtDate = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
   const fmtLong = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -66,7 +66,7 @@
     document.body.classList.toggle('is-gm', isGM());
     const a = document.activeElement, d = a && a.dataset;
     const keep = d ? (d.slot ? `[data-slot="${d.slot}"]` : d.ex ? `[data-ex="${d.ex}"]` : d.filter ? `[data-filter="${d.filter}"]` : d.watch ? `[data-watch="${d.watch}"]` : d.char ? `[data-char="${d.char}"]` : null) : null;
-    renderUser(); renderRoster(); renderAvailability(); renderBoard(); renderAnnounce(); renderDispatches(); renderOverlap(); renderMeta(); renderArm();
+    renderUser(); renderRoster(); renderAvailability(); renderBoard(); renderPaper(); renderAnnounce(); renderDispatches(); renderOverlap(); renderMeta(); renderArm();
     if (KS.renderGcal) KS.renderGcal();
     if (keep) { const el = $(keep); if (el) el.focus({ preventScroll: true }); }
   }
@@ -308,6 +308,9 @@
     return (S.announcements || []).filter(a => a && a.text && (!a.until || a.until >= today));
   };
   const reduceMotion = () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  // Only in-page anchors: a notice can point at a panel on this board, never off-site.
+  const annLink = a => (a.link && /^#[a-z][\w-]*$/i.test(a.link))
+    ? ` <a class="announce__link" href="${esc(a.link)}">${esc(a.linkLabel || 'Read it')}</a>` : '';
 
   function renderAnnounce() {
     const el = $('#announce'), list = liveAnnouncements();
@@ -317,7 +320,7 @@
     const gmEdit = isGM() ? '<button type="button" class="announce__edit" data-action="announce-open">Manage</button>' : '';
     if (reduceMotion()) {
       el.innerHTML = `<span class="announce__label">${list.length > 1 ? `${list.length} notices` : 'Notice'}</span>`
-        + `<div class="announce__all">${list.map(a => `<p>${esc(a.text)} <span class="announce__who">— ${esc(a.author || 'GM')}</span></p>`).join('')}</div>${gmEdit}`;
+        + `<div class="announce__all">${list.map(a => `<p>${esc(a.text)}${annLink(a)} <span class="announce__who">— ${esc(a.author || 'GM')}</span></p>`).join('')}</div>${gmEdit}`;
       stopAnnounce();
       return;
     }
@@ -326,7 +329,7 @@
       ? `<span class="announce__dots">${list.map((_, i) => `<button type="button" data-announce-go="${i}" aria-current="${i === announceIdx}" aria-label="Notice ${i + 1} of ${list.length}"></button>`).join('')}</span>`
       : '';
     el.innerHTML = `<span class="announce__label">Notice</span>`
-      + `<p class="announce__text${announceStepped ? ' is-stepping' : ''}">${esc(a.text)} <span class="announce__who">— ${esc(a.author || 'GM')}</span></p>`
+      + `<p class="announce__text${announceStepped ? ' is-stepping' : ''}">${esc(a.text)}${annLink(a)} <span class="announce__who">— ${esc(a.author || 'GM')}</span></p>`
       + dots + gmEdit;
     announceStepped = false;
     if (list.length > 1) startAnnounce(); else stopAnnounce();
@@ -378,6 +381,102 @@
   function removeAnnounce(id) {
     confirmTwice('ann:' + id, 'Take that announcement down?', async () => {
       try { await A.removeAnnouncement(id); toast('Taken down.', 'ok'); renderAnnounceList(); }
+      catch (err) { toast(err.message || 'Could not remove it.', 'no'); }
+    });
+  }
+
+
+  // ---- The Broadsheet -----------------------------------------------------
+  // The Quill, Claw & Kaboodle, beside the board. Issues live in Foundry as PDF journal pages;
+  // the board stores only the links, newest issue first, back issues behind a fold. A GM posts
+  // one when it is revealed in Foundry; posting can also raise a banner notice and logs a line.
+  const PAPER = 'The Quill, Claw & Kaboodle';
+  const httpsUrl = v => /^https:\/\/[^\s"'<>]+$/i.test(v || '');
+  const issues = () => (S.issues || []).filter(i => i && i.no).slice()
+    .sort((a, b) => (b.no - a.no) || ((b.ts || 0) - (a.ts || 0)));
+
+  function renderPaper() {
+    const el = $('#paper'), list = issues(), gm = isGM();
+    el.hidden = !list.length && !gm;                 // players see nothing until there is an issue
+    if (el.hidden) return;
+    const cur = list[0], tag = $('#paper-tag'), foot = $('#paper-foot');
+    const post = gm ? '<button type="button" class="btn btn--sm paper__post" data-action="paper-open">Post an issue</button>' : '';
+    if (!cur) {
+      tag.textContent = ''; tag.classList.remove('is-new'); foot.hidden = true;
+      $('#paper-body').innerHTML = `<p class="hint hint--flush">No issue posted yet. Post one when you reveal it in Foundry, and it appears here for everyone.</p>${post}`;
+      return;
+    }
+    const fresh = Date.now() - (cur.ts || 0) < 7 * 864e5;
+    tag.textContent = `${fresh ? 'New · ' : ''}No. ${cur.no}`;
+    tag.classList.toggle('is-new', fresh);
+    const pdf = httpsUrl(cur.pdf) ? cur.pdf : '';
+    const art = httpsUrl(cur.cover)
+      ? `<img src="${esc(cur.cover)}" alt="Page one of ${PAPER}, No. ${esc(String(cur.no))}" loading="lazy">`
+      : `<span class="paper__plate">${PAPER}</span>`;
+    const cover = pdf
+      ? `<a class="paper__cover" href="${esc(pdf)}" target="_blank" rel="noopener" title="Open No. ${esc(String(cur.no))} (PDF)">${art}</a>`
+      : `<div class="paper__cover">${art}</div>`;
+    const heads = (cur.heads || []).filter(Boolean).slice(0, 3);
+    const back = list.slice(1);
+    $('#paper-body').innerHTML = cover
+      + (httpsUrl(cur.cover) ? `<p class="paper__name">${PAPER}</p>` : '')   // the plate already carries the name
+      + `<p class="paper__date">No. ${esc(String(cur.no))}${cur.date ? ` · ${esc(cur.date)}` : ''}</p>`
+      + (heads.length ? `<ul class="paper__heads" aria-label="In this issue">${heads.map(h => `<li>${esc(h)}</li>`).join('')}</ul>` : '')
+      + `<div class="row paper__actions">${pdf
+          ? `<a class="btn btn--primary btn--sm" href="${esc(pdf)}" target="_blank" rel="noopener">Read the issue</a><span class="hint hint--inline">PDF</span>`
+          : '<span class="hint hint--inline">No file is linked to this issue.</span>'}</div>`
+      + `<details class="paper__back"${ui.paperBack ? ' open' : ''}><summary><span class="label">Back issues</span><span class="label">${back.length}</span></summary>`
+      + (back.length
+          ? `<ul class="paper__backlist">${back.map(i => `<li>${httpsUrl(i.pdf)
+              ? `<a href="${esc(i.pdf)}" target="_blank" rel="noopener">No. ${esc(String(i.no))}</a>`
+              : `No. ${esc(String(i.no))}`}${i.date ? ` <span>· ${esc(i.date)}</span>` : ''}</li>`).join('')}</ul>`
+          : `<p class="hint hint--flush">No. ${esc(String(cur.no))} is the first. Earlier issues list here, newest first.</p>`)
+      + '</details>' + post;
+    foot.hidden = false;
+    foot.textContent = `Copied in Kwanqobile · posted to the board ${fmtDate.format(new Date(cur.ts || Date.now()))}`;
+  }
+
+  function openPaper() {
+    const f = $('#paper-form'), list = issues();
+    f.reset(); $('#paper-error').hidden = true;
+    $('[name=no]', f).value = String((list.length ? list[0].no : 0) + 1);
+    renderPaperList();
+    $('#paper-dialog').showModal();
+  }
+  function renderPaperList() {
+    $('#paper-list').innerHTML = issues().map(i => `<li><span>No. ${esc(String(i.no))}${i.date ? ` · ${esc(i.date)}` : ''}<small>${esc(i.author || 'GM')} · posted ${fmtDate.format(new Date(i.ts || Date.now()))}</small></span>
+        <button type="button" class="char-row__x" data-action="paper-remove" data-issue="${esc(i.id)}" aria-label="Take No. ${esc(String(i.no))} off the board">×</button></li>`).join('')
+      || '<li class="empty-line">Nothing posted.</li>';
+  }
+  async function submitPaper(e) {
+    e.preventDefault();
+    const f = e.target, err = $('#paper-error'), say = m => { err.textContent = m; err.hidden = false; };
+    const no = parseInt($('[name=no]', f).value, 10);
+    const date = $('[name=date]', f).value.trim();
+    const heads = $('[name=heads]', f).value.split('\n').map(s => s.trim()).filter(Boolean);
+    const pdf = $('[name=pdf]', f).value.trim(), cover = $('[name=cover]', f).value.trim();
+    const banner = $('[name=banner]', f).checked;
+    if (!(no >= 1)) return say('Give the issue a number from 1 up.');
+    if (issues().some(i => i.no === no)) return say(`No. ${no} is already on the board. Take it down below first if it needs replacing.`);
+    if (!date) return say('Give the in-world date the issue carries.');
+    if (heads.length > 3) return say('Up to three headlines — the panel has no room for more.');
+    if (!httpsUrl(pdf)) return say('Paste the PDF’s full https:// link from the Forge.');
+    if (/\.proof\./i.test(pdf)) return say('That link is the GM proof. Link the player sheet instead.');
+    if (cover && !httpsUrl(cover)) return say('The page-one image needs a full https:// link, or leave it blank.');
+    try { await A.postIssue({ no, date, heads, pdf, cover: cover || null }); }
+    catch (ex) { return say(ex.message || 'Could not post it.'); }
+    err.hidden = true;
+    const extras = [A.log('paper', `${PAPER} No. ${no} is out: ${date}.`)];
+    if (banner) extras.push(A.postAnnouncement({ text: `${PAPER} No. ${no} is out.`, until: U.addDays(U.todayKey(), 7),
+      link: '#paper', linkLabel: 'Read it beside Upcoming expeditions' }).then(() => { announceIdx = 0; }));
+    const failed = (await Promise.allSettled(extras)).filter(r => r.status === 'rejected').length;
+    f.reset(); renderPaperList(); $('#paper-dialog').close();
+    toast(failed ? `No. ${no} is on the board, but the banner notice or the feed line did not go through.` : `No. ${no} is on the board.`, failed ? 'hint' : 'ok');
+  }
+  function removePaper(id) {
+    const i = issues().find(x => x.id === id); if (!i) return;
+    confirmTwice('issue:' + id, `Take No. ${i.no} off the board? The PDF stays on the Forge`, async () => {
+      try { await A.removeIssue(id); toast('Taken off the board.', 'ok'); renderPaperList(); }
       catch (err) { toast(err.message || 'Could not remove it.', 'no'); }
     });
   }
@@ -953,6 +1052,9 @@
       case 'announce-open': openAnnounce(); break;
       case 'announce-close': $('#announce-dialog').close(); break;
       case 'announce-remove': removeAnnounce(el.dataset.ann); break;
+      case 'paper-open': openPaper(); break;
+      case 'paper-close': $('#paper-dialog').close(); break;
+      case 'paper-remove': removePaper(el.dataset.issue); break;
       case 'clear-exceptions': clearExceptions(); break;
       case 'party-clear': ui.party.clear(); renderOverlap(); break;
       case 'party-request': partyRequest(el.dataset.date, el.dataset.block); break;
@@ -978,6 +1080,9 @@
   $('#announce').addEventListener('focusin', () => { announcePaused = true; });
   $('#announce').addEventListener('focusout', () => { announcePaused = false; });
   $('#announce-form').addEventListener('submit', submitAnnounce);
+  $('#paper-form').addEventListener('submit', submitPaper);
+  // The back-issue fold survives re-renders ('toggle' does not bubble, so listen on capture).
+  document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('paper__back')) ui.paperBack = e.target.open; }, true);
   $('#post-form').addEventListener('submit', submitPost);
   $('#propose-form').addEventListener('submit', submitPropose);
   $('#profile-form').addEventListener('submit', submitProfile);

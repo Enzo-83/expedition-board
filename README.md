@@ -35,6 +35,29 @@ worth the top of the board, it stays until it expires or the GM takes it down. T
 This is deliberately not the dispatch feed. Dispatches is an automatic log of what happened;
 announcements are what a person wants said.
 
+A notice may carry one **in-page link** (`link: '#paper'`, with a `linkLabel`). Only anchors on this
+board are rendered; a notice can never link off-site.
+
+## The Broadsheet
+
+*The Quill, Claw & Kaboodle*, the campaign's in-world paper, sits at the top of the right-hand rail,
+beside **Upcoming expeditions**; on a phone it moves up under **Signed in**, because the rail would
+otherwise fall to the bottom of the page. It shows the newest issue — page-one cover, masthead,
+in-world date, up to three headlines and **Read the issue** — with back issues behind a fold.
+Players see nothing until an issue exists; a GM sees the panel empty, with **Post an issue**.
+
+**The PDFs live on the Forge**, as PDF journal pages in Foundry. The board stores only links, in
+`issues/{id}` — `{no, date, heads[], pdf, cover}` — readable by the network, writable only by a GM.
+Post an issue **when it is revealed in Foundry**, so the two never disagree. Posting also writes a
+*Broadsheet* line to Dispatches and, by default, a seven-day banner notice linking to the panel.
+
+The form refuses a link containing `.proof.` (the GM proof carries the GM's notes), an issue number
+already on the board, and anything that is not an `https://` link. Taking an issue down removes it
+from the board only; the file stays on the Forge, and the feed line stays in the feed.
+
+⚠️ **Deploy the rules before the site.** The issues listener is soft — refused, it leaves the panel
+empty rather than failing the board — but only the new rules let a GM post.
+
 ## Availability
 
 Availability resolves in three layers, most specific first:

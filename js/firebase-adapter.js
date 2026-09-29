@@ -7,6 +7,8 @@
                  sessions/{id}      proposals and expeditions; status proposed | scheduled | cancelled;
                                     party = [{charId, uid, name, level, owner}]
                  dispatches/{id}    network-wide event feed, newest first by ts
+                 announcements/{id} GM notices for the banner; optional in-page link
+                 issues/{id}        the Broadsheet: {no, date, heads[], pdf, cover} — links only, PDFs live on the Forge
                  allowlist/{email}  who may sign in; gm: true marks a GM — see firestore.rules
                  config/board       gmUids[] and gmNames{} — written by GMs on sign-in so every client knows who runs */
 const KS = window.KS;
@@ -29,8 +31,8 @@ class FirebaseAdapter {
     this._blank();
   }
   _blank() {
-    this.state = { me: null, players: [], gmUids: [], sessions: [], dispatches: [], announcements: [] };
-    this.ready = { players: false, sessions: false, dispatches: false, config: false, announcements: false };
+    this.state = { me: null, players: [], gmUids: [], sessions: [], dispatches: [], announcements: [], issues: [] };
+    this.ready = { players: false, sessions: false, dispatches: false, config: false, announcements: false, issues: false };
   }
 
   start({ onState, onStatus }) {
@@ -85,6 +87,15 @@ class FirebaseAdapter {
       this.state.announcements = qs.docs.map(d => Object.assign({ id: d.id }, d.data()));
       this.ready.announcements = true; this._emit();
     }, fail));
+    // Soft on purpose: if the rules predate the Broadsheet (or it is otherwise refused), the
+    // board still renders with an empty panel instead of failing everyone at the gate.
+    this.unsubs.push(F.onSnapshot(F.query(F.collection(this.db, 'issues'), F.orderBy('no', 'desc'), F.limit(40)), qs => {
+      this.state.issues = qs.docs.map(d => Object.assign({ id: d.id }, d.data()));
+      this.ready.issues = true; this._emit();
+    }, err => {
+      console.warn('Broadsheet issues unavailable:', err && err.message);
+      this.state.issues = []; this.ready.issues = true; this._emit();
+    }));
     this.unsubs.push(F.onSnapshot(F.doc(this.db, 'config', 'board'), d => {
       this.state.gmUids = (d.exists() && d.data().gmUids) || [];
       this.ready.config = true; this._emit();
@@ -95,7 +106,7 @@ class FirebaseAdapter {
   // Render only once every subscription has arrived, so the first paint is whole.
   _emit() {
     const r = this.ready;
-    if (this.state.me && r.players && r.sessions && r.dispatches && r.config && r.announcements) this.onState(this.state);
+    if (this.state.me && r.players && r.sessions && r.dispatches && r.config && r.announcements && r.issues) this.onState(this.state);
   }
   _stop() { this.unsubs.forEach(u => { try { u(); } catch (e) { /* ignore */ } }); this.unsubs = []; }
   _me() { return this.F.doc(this.db, 'players', this.user.uid); }
@@ -217,9 +228,17 @@ class FirebaseAdapter {
 
   async postAnnouncement(a) {
     await this.F.addDoc(this.F.collection(this.db, 'announcements'),
-      clean({ text: a.text, until: a.until, ts: Date.now(), uid: this.user.uid, author: this.state.me.name }));
+      clean({ text: a.text, until: a.until, link: a.link || undefined, linkLabel: a.linkLabel || undefined, ts: Date.now(), uid: this.user.uid, author: this.state.me.name }));
   }
   async removeAnnouncement(id) { await this.F.deleteDoc(this.F.doc(this.db, 'announcements', id)); }
+
+  async postIssue(i) {
+    await this.F.addDoc(this.F.collection(this.db, 'issues'), clean({
+      no: i.no, date: i.date, heads: i.heads || [], pdf: i.pdf, cover: i.cover || null,
+      ts: Date.now(), uid: this.user.uid, author: this.state.me.name,
+    }));
+  }
+  async removeIssue(id) { await this.F.deleteDoc(this.F.doc(this.db, 'issues', id)); }
 
   async log(kind, text, meta = {}) {
     await this.F.addDoc(this.F.collection(this.db, 'dispatches'), clean(Object.assign({ ts: Date.now(), kind, text, uid: this.user.uid }, meta)));

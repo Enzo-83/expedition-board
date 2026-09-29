@@ -74,6 +74,17 @@ service cloud.firestore {
       allow update, delete: if isGM();
     }
 
+    // The Broadsheet: one document per issue of The Quill, Claw & Kaboodle. Only links are stored;
+    // the PDFs live on the Forge. Everyone reads; only a GM posts an issue or takes one down.
+    match /issues/{id} {
+      allow read: if allowed();
+      allow create: if isGM()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.no is int && request.resource.data.no >= 1
+        && request.resource.data.pdf is string && request.resource.data.pdf.matches('https://.+');
+      allow update, delete: if isGM();
+    }
+
     // The feed is append-only and every entry is signed by its author. Editing was only ever
     // needed to coalesce availability lines, and those are no longer written at all.
     match /dispatches/{id} {

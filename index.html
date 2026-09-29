@@ -8,7 +8,7 @@
   <meta name="color-scheme" content="light">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=UnifrakturMaguntia&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -149,6 +149,15 @@
   </section>
 
   <div class="area-rail">
+    <!-- ===== The Broadsheet — The Quill, Claw & Kaboodle ===== -->
+    <section class="panel paper" id="paper" aria-labelledby="paper-h" hidden>
+      <div class="panel__head">
+        <h2 id="paper-h">The Broadsheet</h2>
+        <span class="paper__tag" id="paper-tag"></span>
+      </div>
+      <div class="panel__body" id="paper-body"></div>
+      <p class="paper__foot" id="paper-foot" hidden></p>
+    </section>
     <!-- ===== Network overlap ===== -->
     <section class="panel" aria-labelledby="overlap-h">
       <div class="panel__head">
@@ -301,6 +310,32 @@
   <div class="announce__manage">
     <span class="label">Showing now</span>
     <ul id="announce-list"></ul>
+  </div>
+</dialog>
+
+<!-- ===== The Broadsheet: post an issue (GM) ===== -->
+<dialog id="paper-dialog" aria-labelledby="paper-dh">
+  <div class="dialog__head">
+    <h2 id="paper-dh">Post an issue</h2>
+    <span class="label">GM tools</span>
+  </div>
+  <form id="paper-form" class="form" novalidate>
+    <label class="field"><span>Issue number</span><input name="no" type="number" min="1" step="1"></label>
+    <label class="field"><span>In-world date</span><input name="date" type="text" maxlength="80" placeholder="Lore Day, 24 Returnwater, Year 149"></label>
+    <label class="field full"><span>Headlines &middot; one per line, up to three</span><textarea name="heads" rows="3" maxlength="400" placeholder="Night hand copied the Ward's ledgers"></textarea></label>
+    <label class="field full"><span>PDF on the Forge &middot; the player sheet, never the proof</span><input name="pdf" type="url" placeholder="https://assets.forge-vtt.com/…/broadsheet/….pdf"></label>
+    <label class="field full"><span>Page-one image on the Forge &middot; optional</span><input name="cover" type="url" placeholder="https://assets.forge-vtt.com/…/broadsheet/….png"></label>
+    <label class="paper__check full"><input name="banner" type="checkbox" checked> Announce it on the banner for 7 days</label>
+    <p class="hint hint--inline full">Posting also adds a line to Dispatches. Post it when you reveal the issue in Foundry, so the two never disagree.</p>
+    <p class="form__error full" id="paper-error" role="alert" hidden></p>
+    <div class="form__actions">
+      <button type="button" class="btn btn--ghost" data-action="paper-close">Close</button>
+      <button type="submit" class="btn btn--primary">Post the issue</button>
+    </div>
+  </form>
+  <div class="announce__manage">
+    <span class="label">On the board</span>
+    <ul id="paper-list"></ul>
   </div>
 </dialog>
 

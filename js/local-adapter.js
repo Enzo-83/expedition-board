@@ -13,11 +13,13 @@
      setStatus(id, status)  setLocked(id, bool)       GM (proposer may cancel their own proposal)
      gmUnseat(id, charId, uid)                        GM: remove anyone from a roster
      seat(sessId, character)  unseat(sessId, charId)  move(fromId, toId, charId)   (throw Error(reason) to refuse)
-     postAnnouncement({text, until})  removeAnnouncement(id)       GM notices for the top banner
+     postAnnouncement({text, until, link?, linkLabel?})  removeAnnouncement(id)   GM notices for the top banner;
+                                an optional in-page link, e.g. '#paper'
+     postIssue({no, date, heads[], pdf, cover})  removeIssue(id)   GM: the Broadsheet — links only; the PDF lives on the Forge
      log(kind, text, meta)      writes one dispatch (the feed is append-only)
      reset()                    local only
 
-   state = { me, players[], gmUids[], sessions[], dispatches[] } — see data.js for the shapes. */
+   state = { me, players[], gmUids[], sessions[], dispatches[], announcements[], issues[] } — see data.js for the shapes. */
 window.KS = window.KS || {};
 (function (KS) {
   'use strict';
@@ -38,7 +40,11 @@ window.KS = window.KS || {};
     _load() {
       try {
         const raw = localStorage.getItem(this.key);
-        if (raw) { const s = JSON.parse(raw); if (s && s.version === 5) return s; }
+        if (raw) {
+          const s = JSON.parse(raw);
+          // Boards saved before the Broadsheet have no issues; give them the sample ones.
+          if (s && s.version === 5) { if (!Array.isArray(s.issues)) s.issues = KS.sample(this.opts).issues; return s; }
+        }
       } catch (e) { /* private mode, blocked storage — fall through to sample */ }
       return KS.sample(this.opts);
     }
@@ -122,7 +128,18 @@ window.KS = window.KS || {};
     }
     async postAnnouncement(a) {
       const me = this.state.me;
-      this.state.announcements.unshift({ id: 'a' + KS.util.uid(), text: a.text, until: a.until, ts: Date.now(), uid: me.uid, author: me.name });
+      this.state.announcements.unshift(Object.assign({ id: 'a' + KS.util.uid(), text: a.text, until: a.until, ts: Date.now(), uid: me.uid, author: me.name },
+        a.link ? { link: a.link, linkLabel: a.linkLabel || null } : {}));
+      this._emit();
+    }
+    async postIssue(i) {
+      const me = this.state.me;
+      this.state.issues = this.state.issues || [];
+      this.state.issues.unshift({ id: 'i' + KS.util.uid(), no: i.no, date: i.date, heads: i.heads || [], pdf: i.pdf, cover: i.cover || null, ts: Date.now(), uid: me.uid, author: me.name });
+      this._emit();
+    }
+    async removeIssue(id) {
+      this.state.issues = (this.state.issues || []).filter(i => i.id !== id);
       this._emit();
     }
     async removeAnnouncement(id) {
