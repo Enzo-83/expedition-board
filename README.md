@@ -38,6 +38,15 @@ announcements are what a person wants said.
 A notice may carry one **in-page link** (`link: '#paper'`, with a `linkLabel`). Only anchors on this
 board are rendered; a notice can never link off-site.
 
+## Proposals have a party size
+
+A proposal carries a **party size** (1–8, counting the proposer; 1 is a solo expedition), set when it is proposed. The board
+draws that many slots on it — open ones as **+** for everyone, the proposer included — and refuses
+a join once it is full; "Open seats" and the stats still count scheduled expeditions only. The
+proposer's **Edit** reopens the form to change the title, destination, notes and size, never below
+the number already joined, and logs an *edited* line. Scheduling starts from the proposal's size.
+Proposals made before sizes existed stay open-ended until their proposer sets one.
+
 ## Requests become expeditions
 
 A player's **Request an expedition** (from the party picker) is a line in Dispatches, not an entry on

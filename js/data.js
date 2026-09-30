@@ -98,7 +98,8 @@ window.KS = window.KS || {};
     statusOf: s => s.status || (s.date ? 'scheduled' : 'proposed'),
     isProposal: s => R.statusOf(s) === 'proposed',
     isLive: s => R.statusOf(s) !== 'cancelled',
-    openSeats: s => R.isProposal(s) ? Infinity : Math.max(0, (s.seats | 0) - (s.party || []).length),
+    // A proposal with a party size has that many slots; one made before sizes existed stays open-ended.
+    openSeats: s => (R.isProposal(s) && !s.seats) ? Infinity : Math.max(0, (s.seats | 0) - (s.party || []).length),
     isPast: s => !R.isProposal(s) && s.date < U.todayKey(),
     fits: (me, s) => !!me && !R.isProposal(s) && R.freeOn(me, s.date, s.block),
     myEntry: (me, s) => (s.party || []).find(e => e.uid === me.uid) || null,
@@ -109,7 +110,7 @@ window.KS = window.KS || {};
       if (!R.isLive(sess)) return no('This expedition was cancelled.');
       const already = (sess.party || []).find(e => e.uid === me.uid);
       if (already) return no(already.charId === ch.id ? `${ch.name} is already seated here.` : `You already have ${already.name} on this expedition — one seat per player.`);
-      if (R.isProposal(sess)) return { ok: true, reason: '' };   // nothing else to check until a GM schedules it
+      if (R.isProposal(sess)) return R.openSeats(sess) > 0 ? { ok: true, reason: '' } : no('This proposal is full.');   // nothing else to check until a GM schedules it
       if (R.isPast(sess)) return no('This expedition has already departed.');
       if (sess.locked) return no('The roster is locked.');
       if (R.openSeats(sess) <= 0) return no('No open seats.');
@@ -212,7 +213,7 @@ window.KS = window.KS || {};
         party: [], postedAt: now - 2 * H }, imre)),
       // Proposals: player-made, waiting for a GM to schedule them.
       S('p1', { status: 'proposed', title: 'The Mill on the Tupperwine', region: 'The Tupperwine, upstream of the ford',
-        proposerUid: 'p-marek', proposer: 'Marek', gm: null, gmUid: null, date: null, block: null, seats: null, minLevel: null, maxLevel: null,
+        proposerUid: 'p-marek', proposer: 'Marek', gm: null, gmUid: null, date: null, block: null, seats: 5, minLevel: null, maxLevel: null,
         notes: 'The miller stopped sending flour three weeks ago. Nobody has gone to look.',
         party: [seat('p-marek', 0), seat('p-priya', 0), seat('p-cass', 0)], postedAt: now - 20 * H }),
       S('p2', { status: 'proposed', title: 'Farmbelt Spoke (W) — the empty waystation', region: 'Farmbelt Spoke (W)',

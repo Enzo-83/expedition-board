@@ -170,9 +170,21 @@ class FirebaseAdapter {
     const ref = await this.F.addDoc(this.F.collection(this.db, 'sessions'), clean({
       status: 'proposed', title: p.title, region: p.region, notes: p.notes || '',
       proposerUid: this.user.uid, proposer: me.name, party: [this._entryFor(p.character)], locked: false,
-      gm: null, gmUid: null, date: null, block: null, seats: null, minLevel: null, maxLevel: null, postedAt: Date.now(),
+      gm: null, gmUid: null, date: null, block: null, seats: p.seats || null, minLevel: null, maxLevel: null, postedAt: Date.now(),
     }));
     return ref.id;
+  }
+  // The proposer's edit, re-checked against the fresh document: the party may have grown since.
+  async editProposal(id, f) {
+    const F = this.F, ref = this._sess(id), uid = this.user.uid;
+    await F.runTransaction(this.db, async tx => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) throw new Error('That proposal is no longer on the board.');
+      const s = snap.data();
+      if (s.status !== 'proposed' || s.proposerUid !== uid) throw new Error('Only the proposer can edit a proposal, and only before it is scheduled.');
+      if (f.seats < (s.party || []).length) throw new Error(`${(s.party || []).length} have joined — the party can't be smaller than that.`);
+      tx.update(ref, { title: f.title, region: f.region, notes: f.notes || '', seats: f.seats });
+    });
   }
   async schedule(id, f) {
     await this.F.updateDoc(this._sess(id), clean(Object.assign({}, f, { status: 'scheduled', gmUid: this.user.uid, gm: f.gm || this.state.me.name, scheduledAt: Date.now() })));

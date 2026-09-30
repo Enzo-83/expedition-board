@@ -24,6 +24,11 @@ service cloud.firestore {
     function changesOnly(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
+    // A proposal's party size: absent or null (open-ended, as before), or a whole number 1-8.
+    function seatsOk() {
+      return !('seats' in request.resource.data) || request.resource.data.seats == null
+        || (request.resource.data.seats is int && request.resource.data.seats >= 1 && request.resource.data.seats <= 8);
+    }
 
     // Players may check only their own allowlist entry; only the console (or the CLI) writes here.
     match /allowlist/{e} {
@@ -48,21 +53,24 @@ service cloud.firestore {
     // Proposals and expeditions.
     //  - Players create proposals (status 'proposed', themselves as proposer).
     //  - Anyone allowed may change `party` and nothing else (seating and withdrawing).
-    //  - A proposer may edit or withdraw their own proposal while it is still proposed.
+    //  - A proposer may edit (title, region, notes, party size) or withdraw their own proposal
+    //    while it is still proposed.
     //  - GMs may do anything, including deleting.
     match /sessions/{id} {
       allow read: if allowed();
       allow create: if isGM()
         || (allowed()
             && request.resource.data.status == 'proposed'
-            && request.resource.data.proposerUid == request.auth.uid);
+            && request.resource.data.proposerUid == request.auth.uid
+            && seatsOk());
       allow update: if isGM()
         || (allowed() && changesOnly(['party']))
         || (allowed()
             && resource.data.status == 'proposed'
             && resource.data.proposerUid == request.auth.uid
             && request.resource.data.status in ['proposed', 'cancelled']
-            && changesOnly(['status', 'title', 'region', 'notes', 'party']));
+            && changesOnly(['status', 'title', 'region', 'notes', 'party', 'seats'])
+            && seatsOk());
       allow delete: if isGM();
     }
 

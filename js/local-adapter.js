@@ -8,7 +8,8 @@
      setAvailability(slots[])  setExceptions({"YYYY-MM-DD-block": bool})  setWatching(ids[])
      setPrefs(prefs)  markRead()
      postSession(session) -> id                       GM: a dated expedition
-     propose({ title, region, notes, character }) -> id   player: a proposal, joined with one character
+     propose({ title, region, notes, character, seats }) -> id   player: a proposal, joined with one character
+     editProposal(id, { title, region, notes, seats })     proposer: edit their own proposal
      schedule(id, fields)                             GM: proposal -> scheduled expedition
      setStatus(id, status)  setLocked(id, bool)       GM (proposer may cancel their own proposal)
      gmUnseat(id, charId, uid)                        GM: remove anyone from a roster
@@ -85,10 +86,17 @@ window.KS = window.KS || {};
       this.state.sessions.push({
         id, status: 'proposed', title: p.title, region: p.region, notes: p.notes || '',
         proposerUid: me.uid, proposer: me.name, party: [this._entryFor(p.character)], locked: false,
-        gm: null, gmUid: null, date: null, block: null, seats: null, minLevel: null, maxLevel: null, postedAt: Date.now(),
+        gm: null, gmUid: null, date: null, block: null, seats: p.seats || null, minLevel: null, maxLevel: null, postedAt: Date.now(),
       });
       this._emit();
       return id;
+    }
+    async editProposal(id, f) {
+      const s = this._session(id);
+      if (s.status !== 'proposed' || s.proposerUid !== this.state.me.uid) throw new Error('Only the proposer can edit a proposal, and only before it is scheduled.');
+      if (f.seats < (s.party || []).length) throw new Error('More have joined than that.');
+      Object.assign(s, { title: f.title, region: f.region, notes: f.notes || '', seats: f.seats });
+      this._emit();
     }
     async schedule(id, f) {
       const s = this._session(id), me = this.state.me;

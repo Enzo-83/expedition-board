@@ -230,7 +230,7 @@
         : `<span class="seat seat--filled" tabindex="0" title="${esc(e.name)} · Lvl ${esc(e.level)} · ${esc(e.owner || '')}">${esc(U.initials(e.name))}</span>`;
     const openSeat = `<button type="button" class="seat seat--open" data-open="${esc(s.id)}" aria-label="Open seat on ${esc(s.title)} — place a character">+</button>`;
     const seats = party.map(seatOf);
-    if (prop) { if (!gm && !mine) seats.push(openSeat); }
+    if (prop && !s.seats) { if (!gm && !mine) seats.push(openSeat); }
     else for (let i = party.length; i < s.seats; i++) seats.push(openSeat);
 
     const names = party.map(e => `<span class="${isMine(e) ? 'party__me' : ''}">${esc(e.name)} <small>${esc(e.level)}</small></span>`).join('<span class="party__sep">·</span>');
@@ -255,12 +255,14 @@
       ? `<span class="session__block">Proposed</span><span class="session__time">${esc(relTime(s.postedAt || 0))}</span>`
       : `<span class="session__block">${esc(b.label)}</span><span class="session__time">${esc(b.time)}</span>`;
     const meta = prop
-      ? `${esc(s.region)}<span class="sep">·</span>proposed by ${esc(s.proposer || '')}`
+      ? `${esc(s.region)}<span class="sep">·</span>proposed by ${esc(s.proposer || '')}${s.seats ? `<span class="sep">·</span>${s.seats === 1 ? 'solo' : `party of ${esc(s.seats)}`}` : ''}`
       : `${esc(s.region)}<span class="sep">·</span>GM ${esc(s.gm)}<span class="sep">·</span>${esc(s.seats)} seats`;
     const band = prop
       ? `<span class="label">Levels</span><strong title="Set when a GM schedules it">—</strong>`
       : `<span class="label">Levels</span><strong>${esc(s.minLevel)}–${esc(s.maxLevel)}</strong>`;
-    const count = prop ? `${party.length} joined` : `${party.length} of ${esc(s.seats)} seated${open ? ` · <strong>${open} open</strong>` : ''}`;
+    const count = prop
+      ? (s.seats ? `${party.length} of ${esc(s.seats)} joined${open ? ` · <strong>${open} open</strong>` : ' · full'}` : `${party.length} joined`)
+      : `${party.length} of ${esc(s.seats)} seated${open ? ` · <strong>${open} open</strong>` : ''}`;
     const acts = [`<button type="button" class="watch" data-watch="${esc(s.id)}" aria-pressed="${isWatching(s.id)}" title="${prop ? 'Get a dispatch when this is scheduled' : 'Get a dispatch when a seat opens here'}">${isWatching(s.id) ? 'Watching' : 'Watch'}</button>`];
     // Players get a no-auth "add to my calendar" link on expeditions they are seated on.
     if (!prop && mine && !gm && KS.gcalTemplateUrl) {
@@ -269,7 +271,7 @@
     if (gm) acts.push(prop
       ? `<div class="session__gm"><button type="button" class="btn btn--sm btn--primary" data-action="schedule-open" data-sess="${esc(s.id)}">Schedule</button><button type="button" class="btn btn--sm btn--ghost" data-action="decline" data-sess="${esc(s.id)}">Decline</button></div>`
       : `<div class="session__gm"><button type="button" class="btn btn--sm" data-action="edit-open" data-sess="${esc(s.id)}">Edit</button><button type="button" class="btn btn--sm" data-action="toggle-lock" data-sess="${esc(s.id)}">${s.locked ? 'Unlock' : 'Lock roster'}</button><button type="button" class="btn btn--sm btn--ghost" data-action="cancel" data-sess="${esc(s.id)}">Cancel</button></div>`);
-    else if (isProposer) acts.push(`<div class="session__gm"><button type="button" class="btn btn--sm btn--ghost" data-action="withdraw-proposal" data-sess="${esc(s.id)}">Withdraw</button></div>`);
+    else if (isProposer) acts.push(`<div class="session__gm"><button type="button" class="btn btn--sm" data-action="proposal-edit" data-sess="${esc(s.id)}">Edit</button><button type="button" class="btn btn--sm btn--ghost" data-action="withdraw-proposal" data-sess="${esc(s.id)}">Withdraw</button></div>`);
 
     return `<article class="session${prop ? ' session--proposal' : ''}${mine ? ' session--mine' : ''}${open === 0 ? ' session--full' : ''}" data-id="${esc(s.id)}">
       <div class="session__when">${whenCol}</div>
@@ -668,6 +670,7 @@
     const party = s.party || [], levels = party.map(e => e.level), hits = bestDates(party.map(e => e.uid), 1);
     const base = hits.length ? prefillFor(hits[0].date, hits[0].block, levels, party.length)
       : { date: null, block: 'eve', seats: Math.max(4, party.length), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
+    if (s.seats) base.seats = Math.max(s.seats, party.length);
     return Object.assign(base, { sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '', joined: party.length, hasWindow: hits.length > 0 });
   }
   // Reopen a scheduled expedition in the same dialog to move or correct it.
@@ -712,7 +715,7 @@
     if (!sess || !ch) return;
     const v = R.eligibility(S, sess, ch);
     if (!v.ok) return refuse(sessId, v.reason);
-    const prop = R.isProposal(sess), willFill = !prop && R.openSeats(sess) - 1 <= 0;
+    const prop = R.isProposal(sess), willFill = R.openSeats(sess) - 1 <= 0;
     try {
       await A.seat(sessId, ch);
       disarm();
@@ -905,21 +908,59 @@
   function openPropose() {
     if (!S.me.characters.length) { toast('Add a character to your roster first — a proposal needs someone to go.', 'hint'); openProfile(); return; }
     const f = $('#propose-form'); f.reset(); $('#propose-error').hidden = true;
+    $('[name=editId]', f).value = '';
+    $('#propose-char-field').hidden = false;
+    $('#propose-h').textContent = 'Propose an expedition';
+    $('#propose-submit').textContent = 'Propose';
+    $('[name=seats]', f).min = 1;
     $('#propose-char').innerHTML = S.me.characters.map(c => `<option value="${esc(c.id)}">${esc(c.name)} · ${esc(c.class || '')} · Lvl ${esc(c.level)}</option>`).join('');
+    $('#propose-dialog').showModal();
+  }
+  // The proposer's Edit: title, destination, notes and party size. Who has joined is untouched.
+  function openProposalEdit(id) {
+    const s = byId(id); if (!s || !R.isProposal(s) || s.proposerUid !== S.me.uid) return;
+    const f = $('#propose-form'), joined = (s.party || []).length; f.reset(); $('#propose-error').hidden = true;
+    $('[name=editId]', f).value = s.id;
+    $('[name=title]', f).value = s.title || '';
+    $('[name=region]', f).value = s.region || '';
+    $('[name=notes]', f).value = s.notes || '';
+    $('[name=seats]', f).value = String(s.seats || Math.max(4, joined));
+    $('[name=seats]', f).min = Math.max(1, joined);
+    $('#propose-char-field').hidden = true;
+    $('#propose-h').textContent = 'Edit your proposal';
+    $('#propose-submit').textContent = 'Save changes';
     $('#propose-dialog').showModal();
   }
   async function submitPropose(e) {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(e.target).entries()), err = $('#propose-error');
+    const seats = parseInt(v.seats, 10);
+    if (v.editId) {
+      const s = byId(v.editId), joined = s ? (s.party || []).length : 0;
+      const f2 = { title: v.title.trim(), region: v.region.trim(), notes: v.notes.trim(), seats };
+      const bad = !s ? 'That proposal is no longer on the board.' : !f2.title ? 'Give it a title.' : !f2.region ? 'Say where, or what for.'
+        : !(seats >= 1 && seats <= 8) ? 'A party of 1 to 8 — 1 is a solo expedition.' : seats < joined ? `${joined} have joined — the party can't be smaller than that.` : null;
+      if (bad) { err.textContent = bad; err.hidden = false; return; }
+      const before = s.seats || 0;          // read now: the local adapter edits the same object
+      try {
+        await A.editProposal(s.id, f2);
+        $('#propose-dialog').close();
+        toast(`“${f2.title}” updated.`, 'ok');
+        const grew = before !== seats ? ` — now ${seats === 1 ? 'a solo expedition' : `a party of ${seats}, ${Math.max(0, seats - joined)} open`}` : '';
+        await A.log('edited', `${S.me.name} changed the proposal “${f2.title}”${grew}.`, { sessionId: s.id });
+      } catch (ex) { err.textContent = ex.message || 'Could not save.'; err.hidden = false; }
+      return;
+    }
     const ch = myChar(v.charId);
-    const p = { title: v.title.trim(), region: v.region.trim(), notes: v.notes.trim(), character: ch };
-    const problem = !p.title ? 'Give it a title.' : !p.region ? 'Say where, or what for.' : !ch ? 'Pick the character you would bring.' : null;
+    const p = { title: v.title.trim(), region: v.region.trim(), notes: v.notes.trim(), character: ch, seats };
+    const problem = !p.title ? 'Give it a title.' : !p.region ? 'Say where, or what for.' : !ch ? 'Pick the character you would bring.'
+      : !(seats >= 1 && seats <= 8) ? 'A party of 1 to 8 — 1 is a solo expedition.' : null;
     if (problem) { err.textContent = problem; err.hidden = false; return; }
     try {
       const id = await A.propose(p);
       $('#propose-dialog').close();
       toast(`“${p.title}” is proposed — the GM will see it.`, 'ok');
-      await A.log('proposal', `${S.me.name} proposed “${p.title}” — ${p.region}. Join it from the board.`, { sessionId: id });
+      await A.log('proposal', `${S.me.name} proposed “${p.title}” — ${p.region}, ${seats === 1 ? 'a solo expedition' : `a party of ${seats}. Join it from the board`}.`, { sessionId: id });
     } catch (ex) { err.textContent = ex.message || 'Could not propose.'; err.hidden = false; }
   }
 
@@ -1064,6 +1105,7 @@
       case 'decline': decline(sess); break;
       case 'cancel': cancelExpedition(sess); break;
       case 'withdraw-proposal': withdrawProposal(sess); break;
+      case 'proposal-edit': openProposalEdit(sess); break;
       case 'toggle-lock': toggleLock(sess); break;
       case 'profile-open': openProfile(); break;
       case 'profile-close': $('#profile-dialog').close(); break;

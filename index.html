@@ -256,15 +256,17 @@
     <span class="label">Needs a GM to schedule</span>
   </div>
   <form id="propose-form" class="form" novalidate>
+    <input type="hidden" name="editId">
     <label class="field full"><span>Title</span><input name="title" required maxlength="80" placeholder="The Mill on the Tupperwine"></label>
     <label class="field full"><span>Destination or goal</span><input name="region" required maxlength="80" placeholder="Where you want to go, or what you want done"></label>
-    <label class="field full"><span>Bring</span><select name="charId" id="propose-char"></select></label>
+    <label class="field" id="propose-char-field"><span>Bring</span><select name="charId" id="propose-char"></select></label>
+    <label class="field"><span>Party size &middot; including you</span><input name="seats" type="number" min="1" max="8" value="4" required></label>
     <label class="field full"><span>Notes</span><textarea name="notes" rows="3" maxlength="240" placeholder="What you know, what you want, who you'd like along."></textarea></label>
-    <p class="hint hint--inline full">A proposal has no date. Other players join it from the board; a GM schedules it into the window where everyone joined is free.</p>
+    <p class="hint hint--inline full" id="propose-hint">A proposal has no date. Its open slots show on the board, other players join it there, and a GM schedules it into the window where everyone joined is free.</p>
     <p class="form__error full" id="propose-error" role="alert" hidden></p>
     <div class="form__actions">
       <button type="button" class="btn btn--ghost" data-action="propose-close">Cancel</button>
-      <button type="submit" class="btn btn--primary">Propose</button>
+      <button type="submit" class="btn btn--primary" id="propose-submit">Propose</button>
     </div>
   </form>
 </dialog>
