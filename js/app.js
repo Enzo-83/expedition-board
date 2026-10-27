@@ -68,6 +68,7 @@
     const keep = d ? (d.slot ? `[data-slot="${d.slot}"]` : d.ex ? `[data-ex="${d.ex}"]` : d.filter ? `[data-filter="${d.filter}"]` : d.watch ? `[data-watch="${d.watch}"]` : d.char ? `[data-char="${d.char}"]` : null) : null;
     renderUser(); renderRoster(); renderAvailability(); renderBoard(); renderPaper(); renderAnnounce(); renderDispatches(); renderOverlap(); renderMeta(); renderArm();
     if (KS.renderGcal) KS.renderGcal();
+    if (KS.renderDiscord) KS.renderDiscord();
     if (keep) { const el = $(keep); if (el) el.focus({ preventScroll: true }); }
   }
 
@@ -256,7 +257,7 @@
       : `<span class="session__block">${esc(b.label)}</span><span class="session__time">${esc(b.time)}</span>`;
     const meta = prop
       ? `${esc(s.region)}<span class="sep">·</span>proposed by ${esc(s.proposer || '')}${s.seats ? `<span class="sep">·</span>${s.seats === 1 ? 'solo' : `party of ${esc(s.seats)}`}` : ''}`
-      : `${esc(s.region)}<span class="sep">·</span>GM ${esc(s.gm)}<span class="sep">·</span>${esc(s.seats)} seats`;
+      : `${esc(s.region)}<span class="sep">·</span>GM ${esc(s.gm)}<span class="sep">·</span>${esc(s.seats)} seats${s.sponsor ? `<span class="sep">·</span>backed by ${esc(s.sponsor)}` : ''}`;
     const band = prop
       ? `<span class="label">Levels</span><strong title="Set when a GM schedules it">—</strong>`
       : `<span class="label">Levels</span><strong>${esc(s.minLevel)}–${esc(s.maxLevel)}</strong>`;
@@ -270,7 +271,7 @@
     }
     if (gm) acts.push(prop
       ? `<div class="session__gm"><button type="button" class="btn btn--sm btn--primary" data-action="schedule-open" data-sess="${esc(s.id)}">Schedule</button><button type="button" class="btn btn--sm btn--ghost" data-action="decline" data-sess="${esc(s.id)}">Decline</button></div>`
-      : `<div class="session__gm"><button type="button" class="btn btn--sm" data-action="edit-open" data-sess="${esc(s.id)}">Edit</button><button type="button" class="btn btn--sm" data-action="toggle-lock" data-sess="${esc(s.id)}">${s.locked ? 'Unlock' : 'Lock roster'}</button><button type="button" class="btn btn--sm btn--ghost" data-action="cancel" data-sess="${esc(s.id)}">Cancel</button></div>`);
+      : `<div class="session__gm">${KS.discordReady && KS.discordReady() && !s.discordPost ? `<button type="button" class="btn btn--sm" data-action="discord-post" data-sess="${esc(s.id)}" title="Not in the Discord forum yet">Post to Discord</button>` : ''}<button type="button" class="btn btn--sm" data-action="edit-open" data-sess="${esc(s.id)}">Edit</button><button type="button" class="btn btn--sm" data-action="toggle-lock" data-sess="${esc(s.id)}">${s.locked ? 'Unlock' : 'Lock roster'}</button><button type="button" class="btn btn--sm btn--ghost" data-action="cancel" data-sess="${esc(s.id)}">Cancel</button></div>`);
     else if (isProposer) acts.push(`<div class="session__gm"><button type="button" class="btn btn--sm" data-action="proposal-edit" data-sess="${esc(s.id)}">Edit</button><button type="button" class="btn btn--sm btn--ghost" data-action="withdraw-proposal" data-sess="${esc(s.id)}">Withdraw</button></div>`);
 
     return `<article class="session${prop ? ' session--proposal' : ''}${mine ? ' session--mine' : ''}${open === 0 ? ' session--full' : ''}" data-id="${esc(s.id)}">
@@ -671,11 +672,11 @@
     const base = hits.length ? prefillFor(hits[0].date, hits[0].block, levels, party.length)
       : { date: null, block: 'eve', seats: Math.max(4, party.length), minLevel: levels.length ? Math.min(...levels) : 1, maxLevel: levels.length ? Math.max(...levels) : 5 };
     if (s.seats) base.seats = Math.max(s.seats, party.length);
-    return Object.assign(base, { sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '', joined: party.length, hasWindow: hits.length > 0 });
+    return Object.assign(base, { sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '', sponsor: s.sponsor || '', joined: party.length, hasWindow: hits.length > 0 });
   }
   // Reopen a scheduled expedition in the same dialog to move or correct it.
   function editPrefill(s) {
-    return { mode: 'edit', sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '',
+    return { mode: 'edit', sessionId: s.id, title: s.title, region: s.region, notes: s.notes || '', sponsor: s.sponsor || '',
       date: s.date, block: s.block, seats: s.seats, minLevel: s.minLevel, maxLevel: s.maxLevel };
   }
 
@@ -812,10 +813,12 @@
   function cancelExpedition(id) {
     const s = byId(id); if (!s) return;
     confirmTwice('cancel:' + id, `Cancel “${s.title}” (${when(s)})? Everyone seated is released`, async () => {
+      const before = JSON.parse(JSON.stringify(s));
       try {
         await A.setStatus(id, 'cancelled'); toast('Cancelled.', 'ok');
         await A.log('cancelled', `“${s.title}” — ${when(s)} — was cancelled by GM ${S.me.name}.`, { sessionId: id, date: s.date, block: s.block });
         if (KS.gcalDropEvent) KS.gcalDropEvent(s);
+        if (KS.discordUpdate) KS.discordUpdate(before, Object.assign({}, before, { status: 'cancelled' }));
       } catch (err) { toast(err.message || 'Could not cancel.', 'no'); }
     });
   }
@@ -828,16 +831,20 @@
   }
   async function toggleLock(id) {
     const s = byId(id); if (!s) return;
-    const locked = !s.locked;
-    try { await A.setLocked(id, locked); toast(locked ? 'Roster locked.' : 'Roster unlocked.', 'ok'); await A.log('lock', `Roster ${locked ? 'locked' : 'unlocked'} for “${s.title}” — ${when(s)}.`, { sessionId: id, date: s.date, block: s.block }); }
-    catch (err) { toast(err.message || 'Could not change the lock.', 'no'); }
+    const locked = !s.locked, before = JSON.parse(JSON.stringify(s));
+    try {
+      await A.setLocked(id, locked); toast(locked ? 'Roster locked.' : 'Roster unlocked.', 'ok');
+      await A.log('lock', `Roster ${locked ? 'locked' : 'unlocked'} for “${s.title}” — ${when(s)}.`, { sessionId: id, date: s.date, block: s.block });
+      if (KS.discordUpdate) KS.discordUpdate(before, Object.assign({}, before, { locked }));
+    } catch (err) { toast(err.message || 'Could not change the lock.', 'no'); }
   }
   async function gmRemove(id, charId, uid) {
     const s = byId(id); if (!s) return;
     const e = (s.party || []).find(x => x.charId === charId && x.uid === uid); if (!e) return;
-    const prop = R.isProposal(s);
+    const prop = R.isProposal(s), before = JSON.parse(JSON.stringify(s));
     try {
       await A.gmUnseat(id, charId, uid);
+      if (!prop && KS.discordUpdate) KS.discordUpdate(before, Object.assign({}, before, { party: before.party.filter(x => !(x.charId === charId && x.uid === uid)) }));
       toast(`${e.name} taken off “${s.title}”.`, 'ok');
       await A.log(prop ? 'note' : 'open', `${e.name} (${e.owner || ''}) was taken off “${s.title}” by the GM${prop ? '' : ' — 1 seat opened'}.`, { sessionId: id, date: s.date || undefined, block: s.block || undefined });
     } catch (err) { toast(err.message || 'Could not remove them.', 'no'); }
@@ -852,6 +859,7 @@
     $('[name=title]', f).value = p.title || '';
     $('[name=region]', f).value = p.region || '';
     $('[name=notes]', f).value = p.notes || '';
+    $('[name=sponsor]', f).value = p.sponsor || '';
     $('[name=gm]', f).value = S.me.name;
     const t = new Date(); t.setDate(t.getDate() + 1);
     const date = $('[name=date]', f); date.value = p.date || U.keyOf(t); date.min = U.todayKey();
@@ -873,7 +881,8 @@
     v.mode = f.dataset.mode || '';
     const sessionId = v.sessionId || '', target = sessionId ? byId(sessionId) : null, party = target ? (target.party || []) : [];
     const s = { title: v.title.trim(), region: v.region.trim(), gm: v.gm.trim(), date: v.date, block: v.block,
-      seats: +v.seats, minLevel: +v.minLevel, maxLevel: +v.maxLevel, notes: v.notes.trim() };
+      seats: +v.seats, minLevel: +v.minLevel, maxLevel: +v.maxLevel, notes: v.notes.trim(), sponsor: (v.sponsor || '').trim() || null };
+    const before = target ? JSON.parse(JSON.stringify(target)) : null;   // the local adapter edits target in place
     const lv = party.map(x => x.level);
     const problem = !s.title ? 'Give the expedition a title.' : !s.region ? 'Name the route or region.' : !s.gm ? 'Who is running it?'
       : (!s.date || s.date < U.todayKey()) ? 'Pick a date from today on.' : !(s.seats >= 1) ? 'At least one seat.'
@@ -901,7 +910,10 @@
           Object.assign({ sessionId: id, date: s.date, block: s.block }, fromRequest ? { requestId: fromRequest } : {}));
       }
       // The board has committed; the calendar write is a follow-on that never blocks it.
-      if (KS.gcalPushEvent) KS.gcalPushEvent(Object.assign({}, target || {}, s, { id, gmUid: S.me.uid }));
+      const after = Object.assign({}, before || {}, s, { id, gmUid: S.me.uid, status: 'scheduled', party });
+      if (KS.gcalPushEvent) KS.gcalPushEvent(after);
+      if (edit && KS.discordUpdate) KS.discordUpdate(before, after);
+      else if (!edit && KS.discordPost) KS.discordPost(after);
     } catch (ex) { err.textContent = ex.message || 'Could not post.'; err.hidden = false; }
   }
 
@@ -1056,6 +1068,7 @@
   KS.adapter = () => A;
   KS.isGM = isGM;
   KS.refreshAvail = () => { if (S) { renderAvailability(); renderOverlap(); } };
+  KS.rerender = () => { if (S) renderBoard(); };   // the Discord module, once its settings arrive
 
   // ----------------------------------------------------------------- events
   document.addEventListener('click', e => {
@@ -1128,6 +1141,7 @@
       case 'browser-alerts': toggleBrowserAlerts(); break;
       case 'gcal-sync': if (KS.gcalSync) KS.gcalSync(); break;
       case 'gcal-clear': if (KS.gcalClear) KS.gcalClear(); break;
+      case 'discord-post': { const s = byId(sess); if (s && KS.discordPost) KS.discordPost(s); break; }
       case 'reset':
         // Two clicks within a few seconds — no native confirm(), which sandboxed embeds block.
         if (!A.reset) break;

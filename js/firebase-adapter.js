@@ -10,6 +10,7 @@
                  announcements/{id} GM notices for the banner; optional in-page link
                  issues/{id}        the Broadsheet: {no, date, heads[], pdf, cover} — links only, PDFs live on the Forge
                  allowlist/{email}  who may sign in; gm: true marks a GM — see firestore.rules
+                 secrets/discord    GM-only: {webhook, guildId, channelId, name, tags{scheduled, sponsored, cancelled}}
                  config/board       gmUids[] and gmNames{} — written by GMs on sign-in so every client knows who runs */
 const KS = window.KS;
 
@@ -133,6 +134,11 @@ class FirebaseAdapter {
   async setExceptions(ex) { await this.F.updateDoc(this._me(), { exceptions: ex || {} }); }
   async setCalendarBusy(busy, syncedAt) { await this.F.updateDoc(this._me(), { gcalBusy: busy || {}, gcalSyncedAt: syncedAt || null }); }
   async setCalendarEvent(sessId, eventId) { await this.F.updateDoc(this._sess(sessId), { gcalEventId: eventId || null }); }
+  // Discord: the webhook lives in secrets/discord (GM-only by the rules); the post's ids live on
+  // the session, where they are harmless — a message id is useless without the webhook token.
+  async getDiscord() { const d = await this.F.getDoc(this.F.doc(this.db, 'secrets', 'discord')); return d.exists() ? d.data() : null; }
+  async setDiscord(cfg) { await this.F.setDoc(this.F.doc(this.db, 'secrets', 'discord'), clean(cfg)); }
+  async setDiscordPost(sessId, post) { await this.F.updateDoc(this._sess(sessId), { discordPost: post || null }); }
 
   // An OAuth access token for a Google API, obtained by re-consenting in a popup. Firebase
   // never stores or refreshes these, so it is cached in memory for the hour it lives and the

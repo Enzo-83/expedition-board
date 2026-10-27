@@ -42,6 +42,12 @@ service cloud.firestore {
       allow write: if isGM();
     }
 
+    // GM-only secrets: the Discord webhook URL is a bearer credential — anyone holding it can
+    // post as the board — so no player may read it, not even through the network-wide config.
+    match /secrets/{doc} {
+      allow read, write: if isGM();
+    }
+
     // One profile per player. Everyone on the network can read profiles (the overlap grid
     // needs everyone's availability); only the owner can change theirs.
     match /players/{uid} {

@@ -7,6 +7,7 @@
      saveProfile({ name, handle, discord, characters })
      setAvailability(slots[])  setExceptions({"YYYY-MM-DD-block": bool})  setWatching(ids[])
      setPrefs(prefs)  markRead()
+     getDiscord() -> cfg|null  setDiscord(cfg)  setDiscordPost(sessId, {messageId, threadId}|null)   GM: Discord forum
      postSession(session) -> id                       GM: a dated expedition
      propose({ title, region, notes, character, seats }) -> id   player: a proposal, joined with one character
      editProposal(id, { title, region, notes, seats })     proposer: edit their own proposal
@@ -69,6 +70,11 @@ window.KS = window.KS || {};
     async setExceptions(ex) { this.state.me.exceptions = ex; this._emit(); }
     async setCalendarBusy(busy, syncedAt) { this.state.me.gcalBusy = busy || {}; this.state.me.gcalSyncedAt = syncedAt || null; this._emit(); }
     async setCalendarEvent(sessId, eventId) { this._session(sessId).gcalEventId = eventId || null; this._emit(); }
+    // The sample board keeps the webhook in this browser only, apart from the board state so a
+    // "Reset sample data" never throws it away.
+    async getDiscord() { try { return JSON.parse(localStorage.getItem(this.key + ':discord') || 'null'); } catch (e) { return null; } }
+    async setDiscord(cfg) { try { localStorage.setItem(this.key + ':discord', JSON.stringify(cfg)); } catch (e) { throw new Error('This browser will not store settings.'); } }
+    async setDiscordPost(sessId, post) { this._session(sessId).discordPost = post || null; this._emit(); }
     // No getCalendarToken here: the sample board has no Google session to borrow, and the
     // UI keys off its absence to say so rather than failing at the popup.
     async setWatching(w) { this.state.me.watching = w; this._emit(); }

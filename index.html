@@ -114,6 +114,7 @@
             <button type="button" class="btn btn--sm btn--ghost" data-action="clear-exceptions" hidden id="avail-ex-clear">Clear all</button>
           </div>
           <div id="gcal" class="gcal gm-only"></div>
+          <div id="discord" class="gcal gm-only"></div>
         </div>
         <p class="hint hint--flush" id="avail-hint"></p>
       </div>
@@ -241,6 +242,7 @@
     <label class="field"><span>Min level</span><input name="minLevel" type="number" min="1" max="20" value="1" required></label>
     <label class="field"><span>Max level</span><input name="maxLevel" type="number" min="1" max="20" value="5" required></label>
     <label class="field full"><span>Notes for the party</span><textarea name="notes" rows="3" maxlength="240" placeholder="What the party is walking into, what to bring, when the roster locks."></textarea></label>
+    <label class="field full"><span>Sponsor <small>optional · shown to everyone, here and in Discord</small></span><input name="sponsor" maxlength="60" placeholder="the Reaper’s Circle"></label>
     <p class="form__error full" id="post-error" role="alert" hidden></p>
     <div class="form__actions">
       <button type="button" class="btn btn--ghost" data-action="post-close">Cancel</button>
@@ -351,6 +353,7 @@
 <script src="js/firebase-config.js"></script>
 <script src="js/app.js"></script>
 <script src="js/gcal.js"></script>
+<script src="js/discord.js"></script>
 <script type="module" src="js/firebase-adapter.js"></script>
 </body>
 </html>
